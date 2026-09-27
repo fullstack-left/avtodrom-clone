@@ -81,7 +81,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      # ubuntu-latest ships the Android SDK preinstalled (ANDROID_HOME /
+      # ANDROID_SDK_ROOT already set); just accept the licenses.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
       - run: npm ci
       - name: Build web + sync Capacitor
         run: npm run cap:sync
