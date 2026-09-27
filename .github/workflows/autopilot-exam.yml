@@ -1,0 +1,84 @@
+# End-to-end check: the "Namuna" autopilot drives the whole exam headless in
+# Godot and must finish it with 0 penalty points (scripts/run_tests.py step 3).
+name: Autopilot exam
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: autopilot-exam-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  exam:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        car: [nexia2, cobalt_at]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install scons
+
+      # godot-cpp takes most of the build time; its objects only change with
+      # the submodule commit.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            native/godot-cpp/bin
+            native/godot-cpp/gen
+            native/godot-cpp/**/*.os
+            native/godot-cpp/**/*.o
+            native/.sconsign*.dblite
+          key: godot-cpp-linux-debug-${{ hashFiles('.gitmodules') }}-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            godot-cpp-linux-debug-${{ hashFiles('.gitmodules') }}-${{ runner.os }}-
+
+      - name: Build native module (Linux)
+        working-directory: native
+        run: python -m SCons platform=linux target=template_debug -j"$(nproc)"
+
+      - uses: actions/cache@v4
+        id: godot-cache
+        with:
+          path: tools/godot
+          key: godot-${{ env.GODOT_VERSION }}-linux
+
+      - name: Download Godot
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tools/godot
+          curl -sSLf -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -o /tmp/godot.zip -d tools/godot
+
+      - name: Import project
+        run: tools/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --path game --import
+
+      - name: Drive the exam (${{ matrix.car }}, expect 0 penalties)
+        run: |
+          set +e
+          tools/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --path game \
+            res://scenes/drive.tscn --fixed-fps 120 -- \
+            --autopilot-test --quit-after-s=1500 --car=${{ matrix.car }} 2>&1 | tee exam.log
+          code=${PIPESTATUS[0]}
+          set -e
+          { echo '### ${{ matrix.car }}'; echo '```'; grep -E '^(PENALTY|RESULT|  [a-z0-9_]+ +performed=)' exam.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          if ! grep -q '^RESULT .*penalty=0 ' exam.log; then
+            echo "::error::No clean RESULT line (expected completed exam with penalty=0)"
+            exit 1
+          fi
+          exit $code

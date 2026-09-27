@@ -1,0 +1,18 @@
+[configuration]
+
+entry_symbol = "avtodrom_library_init"
+compatibility_minimum = "4.7"
+reloadable = false
+
+[libraries]
+
+windows.debug.x86_64 = "res://bin/libavtodrom.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://bin/libavtodrom.windows.template_release.x86_64.dll"
+android.debug.arm64 = "res://bin/libavtodrom.android.template_debug.arm64.so"
+android.release.arm64 = "res://bin/libavtodrom.android.template_release.arm64.so"
+android.debug.x86_64 = "res://bin/libavtodrom.android.template_debug.x86_64.so"
+android.release.x86_64 = "res://bin/libavtodrom.android.template_release.x86_64.so"
+linux.debug.x86_64 = "res://bin/libavtodrom.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://bin/libavtodrom.linux.template_release.x86_64.so"
+macos.debug = "res://bin/libavtodrom.macos.template_debug.dylib"
+macos.release = "res://bin/libavtodrom.macos.template_release.dylib"

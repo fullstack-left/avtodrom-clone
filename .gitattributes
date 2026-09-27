@@ -1,0 +1,35 @@
+# Normalize line endings, checkout as native (CRLF on Windows)
+* text=auto eol=native
+
+# Godot text resources: keep LF to avoid noisy diffs across OSes
+*.gd text eol=lf
+*.tscn text eol=lf
+*.tres text eol=lf
+*.godot text eol=lf
+*.import text eol=lf
+*.cfg text eol=lf
+*.gdshader text eol=lf
+
+# C/C++ sources
+*.c text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.hpp text eol=lf
+
+# Binary assets: never touch line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.hdr binary
+*.glb binary
+*.gltf binary
+*.wav binary
+*.ogg binary
+*.mp3 binary
+*.ttf binary
+*.otf binary
+*.dll binary
+*.so binary
+*.exp binary
+*.lib binary
+*.pdb binary

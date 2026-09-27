@@ -1,0 +1,47 @@
+#!/usr/bin/env python
+# Avtodrom native module.
+#
+#   python -m SCons                                  # Windows debug DLL -> game/bin/
+#   python -m SCons target=template_release          # Windows release DLL
+#   python -m SCons platform=android arch=arm64 target=template_release
+#   python -m SCons tests=yes                        # head-less sim tests -> native/bin/sim_tests(.exe)
+import os
+
+API_VERSION = "4.7"
+
+if ARGUMENTS.get("tests", "no") == "yes":
+    env = Environment(TARGET_ARCH="x86_64")
+    if env["PLATFORM"] == "win32":
+        env.Append(CXXFLAGS=["/std:c++17", "/EHsc", "/O2", "/W4", "/nologo", "/utf-8"])
+    else:
+        env.Append(CXXFLAGS=["-std=c++17", "-O2", "-Wall", "-Wextra"])
+    env.Append(CPPPATH=["src", "tests"])
+    env.VariantDir("build/tests/sim", "src/sim", duplicate=0)
+    env.VariantDir("build/tests/t", "tests", duplicate=0)
+    sim_objs = env.Object(Glob("build/tests/sim/*.cpp"))
+    Default(env.Program("bin/sim_tests", sim_objs + ["build/tests/t/sim_tests.cpp"]))
+    if os.path.exists("tests/debug_main.cpp"):  # scratch experiments, not part of the suite
+        Default(env.Program("bin/debug_main", sim_objs + ["build/tests/t/debug_main.cpp"]))
+    Return()
+
+base = Environment(tools=["default"], PLATFORM="")
+if os.name == "nt" and ARGUMENTS.get("platform") == "android":
+    # Windows host: godot-cpp's ~900 objects overflow the 32 KB command line
+    # when archived; pass them to llvm-ar through a response file instead.
+    base["ARCOM"] = "${TEMPFILE('$AR $ARFLAGS $TARGET $SOURCES', '$ARCOMSTR')}"
+    base["MAXLINELENGTH"] = 30000
+env = SConscript("godot-cpp/SConstruct", {"env": base, "api_version": API_VERSION})
+env.Append(CPPPATH=["src/"])
+if env["platform"] == "windows" and not env.get("use_mingw", False):
+    env.Append(CXXFLAGS=["/utf-8"])
+
+variant = "build/{}.{}.{}".format(env["platform"], env["target"], env["arch"])
+env.VariantDir(variant, "src", duplicate=0)
+sources = Glob(variant + "/*.cpp") + Glob(variant + "/sim/*.cpp") + Glob(variant + "/godot/*.cpp")
+
+suffix = env["suffix"].replace(".dev", "").replace(".universal", "")
+library = env.SharedLibrary(
+    "../game/bin/libavtodrom{}{}".format(suffix, env["SHLIBSUFFIX"]),
+    source=sources,
+)
+Default(library)

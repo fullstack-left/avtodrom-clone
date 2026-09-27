@@ -1,0 +1,6 @@
+.godot/
+*.tmp
+bin/*.exp
+bin/*.lib
+bin/*.pdb
+export/

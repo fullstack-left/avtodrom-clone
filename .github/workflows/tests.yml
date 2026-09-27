@@ -1,0 +1,57 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sim-tests:
+    name: C++ sim tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install scons
+      - name: Build sim_tests
+        run: python -m SCons tests=yes -j4
+      - name: Run sim_tests
+        shell: bash
+        run: ./bin/sim_tests
+
+  extension:
+    name: GDExtension build (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install scons
+      - uses: actions/cache@v4
+        with:
+          path: |
+            native/godot-cpp/bin
+            native/godot-cpp/gen
+            native/.sconsign*.dblite
+            native/godot-cpp/.sconsign*.dblite
+          key: godot-cpp-linux-${{ hashFiles('.gitmodules') }}-${{ github.sha }}
+          restore-keys: godot-cpp-linux-${{ hashFiles('.gitmodules') }}-
+      - name: Build libavtodrom (template_debug)
+        working-directory: native
+        run: python -m SCons platform=linux target=template_debug -j4
