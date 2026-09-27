@@ -1,0 +1,137 @@
+# Build the Avtoshahar 3D city simulator for all three targets — Web (GitHub
+# Pages), Android APK and Windows EXE — and attach the APK/EXE to a GitHub
+# Release whenever a tag like `avtoshahar-v*` is pushed.
+name: Avtoshahar build
+
+on:
+  push:
+    branches: [main]
+    paths: ['city/**', '.github/workflows/avtoshahar.yml']
+    tags: ['avtoshahar-v*']
+  pull_request:
+    paths: ['city/**', '.github/workflows/avtoshahar.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: avtoshahar-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+defaults:
+  run:
+    working-directory: city
+
+jobs:
+  web:
+    name: Web bundle + Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: city/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Build web bundle
+        run: npm run build
+      # Set the Pages base path so assets resolve under /<repo>/.
+      - name: Smoke test (headless Chromium)
+        run: |
+          npx playwright install --with-deps chromium
+          node scripts/smoke.mjs free
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avtoshahar-web
+          path: city/dist
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: city/dist
+
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    needs: web
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: city/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - name: Build web + sync Capacitor
+        run: npm run cap:sync
+      - name: Assemble debug APK
+        working-directory: city/android
+        run: ./gradlew --no-daemon assembleDebug
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk avtoshahar.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avtoshahar-apk
+          path: city/avtoshahar.apk
+
+  windows:
+    name: Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: city/package-lock.json
+      - run: npm ci
+      - name: Build web bundle
+        run: npm run build
+      - name: Package Windows installer + portable
+        run: npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avtoshahar-windows
+          path: |
+            city/release/*.exe
+
+  release:
+    name: Publish release
+    needs: [web, android, windows]
+    if: startsWith(github.ref, 'refs/tags/avtoshahar-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Show artifacts
+        run: find artifacts -type f
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Avtoshahar ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/avtoshahar-apk/avtoshahar.apk
+            artifacts/avtoshahar-windows/*.exe

@@ -1,0 +1,13 @@
+{
+  "appId": "uz.avtodrom.avtoshahar",
+  "appName": "Avtoshahar",
+  "webDir": "dist",
+  "backgroundColor": "#0b1020",
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0b1020"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
