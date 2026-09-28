@@ -98,6 +98,7 @@ export class Game {
     this.mode = mode;
     const spec = this.settings.car === 'cobalt_at' ? COBALT_AT : NEXIA2;
     this.phys = new VehiclePhysics(spec);
+    this.phys.manualAssist = this.settings.manualAssist;
     this.car = new PlayerCar(this.phys, 0xdfe4ea);
     await this.car.load(this.settings.quality);
     this.car.onBlink = (on) => this.settings.sound && this.audio.tick(on ? 'on' : 'off');
@@ -227,6 +228,9 @@ export class Game {
     if (inp.take('cycleCamera')) this.cameraRig.cycle();
     if (inp.take('gearUp')) this.phys.shiftUp();
     if (inp.take('gearDown')) this.phys.shiftDown();
+    if (inp.take('selectDrive')) this.phys.selectDrive();
+    if (inp.take('selectReverse')) this.phys.selectReverse();
+    if (inp.take('selectPark')) this.phys.selectPark();
     if (inp.take('neutral')) this.phys.neutral();
     if (inp.take('startEngine')) {
       this.phys.start();
@@ -326,15 +330,22 @@ export class Game {
   }
 
   private routeCache: Float32Array | null = null;
+  private routeRef: number[] | null = null;
   private routePoly(): Float32Array | null {
-    // MiniMap uses the same poly the ribbon was built from; recompute lazily.
-    if (!this.nav.route) return null;
+    if (!this.nav.route) {
+      this.routeRef = null;
+      this.routeCache = null;
+      return null;
+    }
+    if (this.routeRef === this.nav.route && this.routeCache) return this.routeCache;
     const pts: number[] = [];
     for (const e of this.nav.route) {
       const ed = this.graph.edges[e];
       pts.push(ed.from.x, ed.from.z, ed.to.x, ed.to.z);
     }
-    return new Float32Array(pts);
+    this.routeRef = this.nav.route;
+    this.routeCache = new Float32Array(pts);
+    return this.routeCache;
   }
 
   private async updateMissions(): Promise<void> {
@@ -388,11 +399,13 @@ export class Game {
   }
 
   private updateStats(): void {
+    const metrics = this.sim.getMetrics();
     const rows = [
       `${t('fps')}: <b>${this.fps.toFixed(0)}</b>`,
-      `${t('cars')}: <b>${this.sim.count}</b> <small>(${this.trafficRenderer.visibleNear}+${this.trafficRenderer.visibleFar})</small>`,
+      `${t('cars')}: <b>${metrics.activeVehicles}/${metrics.targetVehicles}</b> <small>(${this.trafficRenderer.visibleClose}+${this.trafficRenderer.visibleMid}+${this.trafficRenderer.visibleFar})</small>`,
       `${t('avg_speed')}: <b>${this.sim.avgSpeedKmh().toFixed(0)}</b> km/h`,
-      `${t('lane_changes')}: <b>${this.sim.laneChanges}</b>`,
+      `${t('stopped_fraction')}: <b>${Math.round(metrics.stoppedFraction * 100)}%</b>`,
+      `${t('reservations')}: <b>${metrics.activeReservations}</b>`,
       `${t('throughput')}: <b>${this.sim.junctionPasses}</b>`,
     ];
     this.hud.setStats(rows.join(' · '));

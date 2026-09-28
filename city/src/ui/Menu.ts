@@ -19,6 +19,7 @@ export interface Settings {
   lights: 'normal' | 'flash';
   officer: boolean;
   sound: boolean;
+  manualAssist: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -32,6 +33,7 @@ const DEFAULTS: Settings = {
   lights: 'normal',
   officer: false,
   sound: true,
+  manualAssist: true,
 };
 
 export function loadSettings(): Settings {
@@ -89,7 +91,12 @@ export class Menu {
     this.clear();
     const card = document.createElement('div');
     card.className = 'card main';
-    card.innerHTML = `<h1>${t('title')}</h1><p class="sub">${t('subtitle')}</p>`;
+    card.innerHTML = `
+      <div class="brand-mark"><img src="./assets/ui/icon_192.png" alt=""/></div>
+      <h1>${t('title')}</h1>
+      <p class="sub">${t('subtitle')}</p>
+      <div class="feature-chips"><span>YHQ / PDD</span><span>IDM + MOBIL</span><span>Web · APK · EXE</span></div>
+    `;
     const modes: [GameMode, string][] = [
       ['free', t('play_free')],
       ['missions', t('play_missions')],
@@ -139,6 +146,7 @@ export class Menu {
         this.showSettings(back);
       }),
       this.select(t('car'), s.car, [['nexia2', t('car_nexia2')], ['cobalt_at', t('car_cobalt_at')]], (v) => (s.car = v)),
+      this.select(t('clutch_mode'), s.manualAssist ? 'assist' : 'full', [['assist', t('clutch_assist')], ['full', t('clutch_full')]], (v) => (s.manualAssist = v === 'assist')),
       this.select(t('quality'), s.quality, [['low', t('q_low')], ['medium', t('q_medium')], ['high', t('q_high')]], (v) => (s.quality = v)),
       this.select(t('time_of_day'), s.time, [['day', t('day')], ['evening', t('evening')], ['night', t('night')]], (v) => (s.time = v)),
       this.select(t('weather'), s.weather, [['clear', t('clear')], ['rain', t('rain')], ['fog', t('fog')]], (v) => (s.weather = v)),

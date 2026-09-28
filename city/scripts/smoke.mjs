@@ -30,9 +30,16 @@ const server = http.createServer(async (req, res) => {
 
 await new Promise((r) => server.listen(4180, r));
 const mode = process.argv[2] || 'free';
+const car = process.argv[3];
 const browser = await chromium.launch({ args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
+if (car) {
+  await page.addInitScript((selectedCar) => {
+    const old = JSON.parse(localStorage.getItem('avtoshahar.settings') || '{}');
+    localStorage.setItem('avtoshahar.settings', JSON.stringify({ ...old, car: selectedCar, manualAssist: true }));
+  }, car);
+}
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
@@ -67,7 +74,7 @@ await page.screenshot({ path: `${shotDir}/avtoshahar-${mode}.png` }).catch(() =>
 // Grab FPS from the stats HUD.
 const stats = await page.$eval('.hud-stats', (e) => e.textContent).catch(() => '(no hud)');
 const telemetry = await page.$eval('#gl', (e) => ({ ...e.dataset })).catch(() => ({}));
-console.log('MODE', mode, '| STATS:', stats);
+console.log('MODE', mode, '| CAR:', car || 'default', '| STATS:', stats);
 console.log('TELEMETRY:', telemetry);
 console.log('ERRORS:', errors.length);
 for (const e of errors.slice(0, 25)) console.log(' -', e);

@@ -259,7 +259,7 @@ export class VehiclePhysics {
       this.autoMode = 'D';
       this.autoGear = 1;
     } else {
-      this.gear = 1;
+      this.gear = this.manualAssist ? 1 : 0;
       this.clutchEngagement = 0;
       this.manualShiftCut = 0;
     }
@@ -361,12 +361,12 @@ export class VehiclePhysics {
         // gear ratios, but ramps through the bite point for binary keyboards.
         const speedPart = smoothstep(0.25, 4.8, vAbs);
         const rpmProtection = Math.max(0.12, Math.min(1, (rpm - 430) / Math.max(450, s.idleRpm + 350 - 430)));
-        let targetEngagement = (0.2 + throttle * 0.42 + speedPart * 0.72) * rpmProtection;
+        let targetEngagement = (0.25 + throttle * 0.5 + speedPart * 0.65) * rpmProtection;
         if (c.brake > 0.2 && vAbs < 0.8) targetEngagement = 0;
         if (this.manualShiftCut > 0 || ratio === 0) targetEngagement = 0;
         if (ratio * this.vx < -0.35) targetEngagement = 0;
         targetEngagement = Math.max(0, Math.min(1, targetEngagement));
-        const clutchRate = targetEngagement > this.clutchEngagement ? 0.92 : 3.4;
+        const clutchRate = targetEngagement > this.clutchEngagement ? 1.4 : 3.4;
         this.clutchEngagement += Math.max(-clutchRate * dt, Math.min(clutchRate * dt, targetEngagement - this.clutchEngagement));
         engage = Math.min(this.clutchEngagement, 1 - Math.min(1, Math.max(0, c.clutch)));
       } else {
@@ -527,7 +527,7 @@ export class VehiclePhysics {
     this.running = true;
     this.stalled = false;
     this.engineOmega = this.spec.idleRpm / RAD2RPM;
-    this.gear = this.spec.transmission === 'manual' ? 1 : 0;
+    this.gear = this.spec.transmission === 'manual' && this.manualAssist ? 1 : 0;
     this.autoMode = this.spec.transmission === 'automatic' ? 'D' : 'N';
     this.autoGear = 1;
     this.clutchEngagement = 0;
