@@ -164,6 +164,7 @@ export class Game {
     const z = lane.zs[0] + (lane.zs[1] - lane.zs[0]) * t2;
     const yaw = Math.atan2(-(lane.xs[1] - lane.xs[0]), -(lane.zs[1] - lane.zs[0]));
     this.phys.reset(x, z, yaw);
+    this.phys.prepareForDriving();
     // Rehome AI state, including reservations and lane-change occupancy; merely
     // zeroing speed leaves canonical overlaps and an immediate collision.
     this.sim.clearPlayerArea(x, z, 20);
@@ -282,9 +283,16 @@ export class Game {
         this.audio.crash();
         this.onCrash?.();
       }
-      // cross traffic near junction for the priority check
-      const near = this.sim.near(this.phys.x, this.phys.z, 16, this.aiBuf).length > 0;
-      this.monitor.setCrossTraffic(near);
+      // Only a moving, transverse approach can constitute conflicting traffic;
+      // same-lane followers and parked neighbours must not cause yield fines.
+      const nearby = this.sim.near(this.phys.x, this.phys.z, 18, this.aiBuf);
+      const pfx = -Math.sin(this.phys.yaw), pfz = -Math.cos(this.phys.yaw);
+      const crossTraffic = nearby.some((i) => {
+        if (this.sim.v[i] < 1.2) return false;
+        const afx = -Math.sin(this.sim.yaw[i]), afz = -Math.cos(this.sim.yaw[i]);
+        return Math.abs(pfx * afx + pfz * afz) < 0.62;
+      });
+      this.monitor.setCrossTraffic(crossTraffic);
       this.monitor.update(dt, col.ai, col.ped, col.obj);
       this.audio.update(this.phys);
     }
@@ -388,6 +396,20 @@ export class Game {
       `${t('throughput')}: <b>${this.sim.junctionPasses}</b>`,
     ];
     this.hud.setStats(rows.join(' · '));
+    if (this.mode !== 'spectate' && this.phys) {
+      // Machine-readable telemetry for wrapper diagnostics and release smoke
+      // checks; no internal object graph is exposed globally.
+      this.canvas.dataset.speed = this.phys.kmh.toFixed(2);
+      this.canvas.dataset.forwardSpeed = this.phys.vx.toFixed(3);
+      this.canvas.dataset.rpm = this.phys.rpm.toFixed(0);
+      this.canvas.dataset.throttle = this.input.state.throttle.toFixed(2);
+      this.canvas.dataset.clutch = this.phys.clutchEngagement.toFixed(2);
+      this.canvas.dataset.acceleration = this.phys.ax.toFixed(3);
+      this.canvas.dataset.brake = this.input.state.brake.toFixed(2);
+      this.canvas.dataset.handbrake = String(this.input.state.handbrake);
+      this.canvas.dataset.position = `${this.phys.x.toFixed(2)},${this.phys.z.toFixed(2)}`;
+      this.canvas.dataset.gear = this.phys.gearLabel();
+    }
   }
 
   restart(): void {

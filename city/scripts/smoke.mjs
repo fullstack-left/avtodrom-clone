@@ -66,7 +66,9 @@ const shotDir = '/projects/sandbox/.kiro/artifacts/screenshots';
 await page.screenshot({ path: `${shotDir}/avtoshahar-${mode}.png` }).catch(() => page.screenshot({ path: `/tmp/avtoshahar-${mode}.png` }));
 // Grab FPS from the stats HUD.
 const stats = await page.$eval('.hud-stats', (e) => e.textContent).catch(() => '(no hud)');
+const telemetry = await page.$eval('#gl', (e) => ({ ...e.dataset })).catch(() => ({}));
 console.log('MODE', mode, '| STATS:', stats);
+console.log('TELEMETRY:', telemetry);
 console.log('ERRORS:', errors.length);
 for (const e of errors.slice(0, 25)) console.log(' -', e);
 await browser.close();

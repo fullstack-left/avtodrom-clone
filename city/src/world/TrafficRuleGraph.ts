@@ -854,8 +854,12 @@ export class TrafficRuleGraph {
     return null;
   }
 
-  /** Road segment (outside junction boxes) under (x,z) and the lateral offset. */
+  /** Road segment outside junction boxes and the lateral offset. */
   roadAt(x: number, z: number): { road: Road; lat: number; along: number } | null {
+    // A point in a junction belongs to connector space, not whichever grid
+    // road is tested first. This prevents legal north/south traffic from being
+    // classified as oncoming/sidewalk traffic on the horizontal road.
+    if (this.nodeAt(x, z, 0.6)) return null;
     const fi = (x - this.minX) / this.block;
     const fj = (z - this.minZ) / this.block;
     const i = Math.round(fi), j = Math.round(fj);

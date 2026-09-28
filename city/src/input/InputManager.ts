@@ -39,6 +39,10 @@ export class InputManager {
   touch = { throttle: 0, brake: 0, steer: 0, handbrake: false };
   hasTouch = false;
   private listeners: (() => void)[] = [];
+  private lastUpdate = performance.now();
+  private filteredThrottle = 0;
+  private filteredBrake = 0;
+  private filteredSteer = 0;
 
   constructor() {
     const kd = (e: KeyboardEvent) => {
@@ -74,6 +78,9 @@ export class InputManager {
   }
 
   update(): void {
+    const now = performance.now();
+    const dt = Math.max(1 / 240, Math.min(0.05, (now - this.lastUpdate) / 1000));
+    this.lastUpdate = now;
     const s = this.state;
     const K = (c: string) => this.keys.has(c);
     // Analog from keyboard.
@@ -120,9 +127,15 @@ export class InputManager {
       handbrake = handbrake || this.touch.handbrake;
     }
 
-    s.throttle = clamp01(throttle);
-    s.brake = clamp01(brake);
-    s.steer = Math.max(-1, Math.min(1, steer));
+    const targetThrottle = clamp01(throttle);
+    const targetBrake = clamp01(brake);
+    const targetSteer = Math.max(-1, Math.min(1, steer));
+    this.filteredThrottle = approach(this.filteredThrottle, targetThrottle, (targetThrottle > this.filteredThrottle ? 2.8 : 4.5) * dt);
+    this.filteredBrake = approach(this.filteredBrake, targetBrake, (targetBrake > this.filteredBrake ? 5.5 : 7.0) * dt);
+    this.filteredSteer = approach(this.filteredSteer, targetSteer, (Math.abs(targetSteer) > Math.abs(this.filteredSteer) ? 2.7 : 4.2) * dt);
+    s.throttle = this.filteredThrottle;
+    s.brake = this.filteredBrake;
+    s.steer = this.filteredSteer;
     s.clutch = clamp01(clutch);
     s.handbrake = handbrake;
     // Copy edges into state (read by the game, then cleared with take()).
@@ -144,3 +157,4 @@ function deadzone(v: number, dz = 0.12): number {
   return Math.abs(v) < dz ? 0 : (v - Math.sign(v) * dz) / (1 - dz);
 }
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const approach = (value: number, target: number, amount: number) => value < target ? Math.min(target, value + amount) : Math.max(target, value - amount);

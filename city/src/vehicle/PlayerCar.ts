@@ -117,7 +117,7 @@ export class PlayerCar {
     for (let i = 0; i < this.wheelPivots.length; i++) if (i < 2) this.wheelPivots[i].rotation.y = steer;
     for (const s of this.wheelSpins) s.rotation.x = -p.wheelSpin;
     if (this.steering) {
-      const ratio = (p.spec.steeringWheelLockDeg / 2) / p.spec.maxSteerDeg;
+      const ratio = p.spec.steeringWheelLockDeg / p.spec.maxSteerDeg;
       this.steering.rotation.y = steer * ratio;
     }
     // Indicators 90 flashes/min.
