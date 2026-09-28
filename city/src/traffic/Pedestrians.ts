@@ -156,6 +156,10 @@ export class Pedestrians {
 
   /** Is it safe for a pedestrian to step onto this crosswalk now? */
   private canCross(cw: Crosswalk): boolean {
+    // Vehicle and pedestrian admission share one exclusion protocol: sticky
+    // connector grants win until rear-clear, while a newly committed pedestrian
+    // publishes intent before the next vehicle reservation pass.
+    if (this.sim.crosswalkReserved(cw)) return false;
     if (cw.signalized && cw.node?.light && cw.node.regime() === 'light') return cw.node.light.pedestrianGreen(cw.armDir as 0 | 1 | 2 | 3);
     if (cw.node?.regime() === 'regulator') {
       const r = cw.node.regulator!;
@@ -216,11 +220,13 @@ export class Pedestrians {
       this.x[i] = A.x + dx * f + (-dz * inv) * side;
       this.z[i] = A.z + dz * f + (dx * inv) * side;
       this.yaw[i] = Math.atan2(-dx, -dz);
-      if (cur.cw && !this.waiting[i] && this.t[i] > 0.3 && this.t[i] < cur.len - 0.3) {
+      if (cur.cw && !this.waiting[i] && this.t[i] < cur.len - 0.3) {
         const cw = cur.cw;
         const u = cw.axis === 'x' ? this.x[i] - cw.cx : this.z[i] - cw.cz;
         const du = cw.axis === 'x' ? dx : dz;
-        cw.occupants.push({ u, vu: Math.sign(du) * this.speed[i] });
+        // t <= 0.3 is a committed crossing intent at the curb. Publishing it
+        // in this same update closes the pedestrian/new-grant race.
+        cw.occupants.push({ u, vu: Math.sign(du) * this.speed[i], intent: this.t[i] <= 0.3 });
       }
     }
   }
@@ -256,8 +262,9 @@ export class Pedestrians {
       this.q.setFromEuler(this.e);
       this.m.compose(this.p, this.q, this.sc);
       this.mesh.setMatrixAt(k, this.m);
-      if (k !== i && this.mesh.instanceColor) {
-        // keep colour stable per pedestrian
+      if (this.mesh.instanceColor) {
+        // Always rewrite compacted colours. Culling patterns can map a source
+        // back to the same slot that another source overwrote last frame.
         this.mesh.instanceColor.setXYZ(k, ...colorOf(i));
       }
       k++;

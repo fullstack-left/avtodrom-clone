@@ -63,8 +63,8 @@ export interface Crosswalk {
   node: Node | null; // junction crosswalk or mid-block (null)
   armDir: Dir | -1; // arm of the node
   signalized: boolean;
-  /** Pedestrians currently on the zebra (updated by Pedestrians). */
-  occupants: { u: number; vu: number }[];
+  /** Pedestrians currently on the zebra or committed to enter it. */
+  occupants: { u: number; vu: number; intent?: boolean }[];
 }
 
 /** Common interface for things a car can drive along. */

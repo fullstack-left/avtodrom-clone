@@ -106,13 +106,19 @@ export class Game {
     this.monitor.examMode = mode === 'exam';
     this.collisions = new Collisions(this.phys, this.sim, this.peds, this.world);
 
-    // Density.
-    const maxCars = this.settings.quality === 'low' ? 900 : this.settings.quality === 'medium' ? 1800 : 3200;
-    const n = mode === 'spectate' ? maxCars : Math.round(200 + this.settings.density * (maxCars - 200));
+    // Traffic demand is calibrated from lane-kilometres, independent of
+    // renderer quality. Quality only controls representation/culling.
+    const n = this.sim.calibratedCount(this.settings.density, mode === 'spectate');
     this.sim.setCount(n);
     this.peds.setCount(this.settings.pedestrians ? (this.settings.quality === 'low' ? 120 : 400) : 0);
-    // Warm up the simulation so the city is already busy.
-    for (let i = 0; i < 240; i++) this.sim.step(1 / 30);
+    // Warm the same control/pedestrian/traffic ordering used by live ticks.
+    // This avoids filling a city against frozen red lights and empty zebras.
+    const warmStep = 1 / 30;
+    for (let i = 0; i < 240; i++) {
+      this.graph.update(warmStep);
+      this.peds.update(warmStep);
+      this.sim.step(warmStep);
+    }
 
     this.trafficRenderer.setNight(this.engine.night);
     this.monitor.setDark(this.engine.night > 0.5 || this.settings.weather === 'fog');
@@ -158,10 +164,9 @@ export class Game {
     const z = lane.zs[0] + (lane.zs[1] - lane.zs[0]) * t2;
     const yaw = Math.atan2(-(lane.xs[1] - lane.xs[0]), -(lane.zs[1] - lane.zs[0]));
     this.phys.reset(x, z, yaw);
-    // Clear AI cars around the spawn.
-    for (let i = 0; i < this.sim.count; i++) {
-      if (Math.hypot(this.sim.x[i] - x, this.sim.z[i] - z) < 14) this.sim.v[i] = 0;
-    }
+    // Rehome AI state, including reservations and lane-change occupancy; merely
+    // zeroing speed leaves canonical overlaps and an immediate collision.
+    this.sim.clearPlayerArea(x, z, 20);
     this.startEdge = this.nav.currentEdge(x, z, yaw);
     if (this.startEdge < 0) this.startEdge = lane.edge.id;
   }
@@ -258,8 +263,10 @@ export class Game {
       } else P.dIn = -1;
     } else this.sim.player.active = false;
 
-    this.sim.step(dt);
+    // Publish pedestrian occupancy before atomic vehicle admission so neither
+    // side enters a crossing from a stale empty snapshot.
     this.peds.update(dt);
+    this.sim.step(dt);
 
     if (this.mode !== 'spectate') {
       this.phys.grip = this.settings.weather === 'rain' ? 0.75 : this.settings.weather === 'fog' ? 0.92 : 1;
