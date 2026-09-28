@@ -53,11 +53,20 @@ export class RuleMonitor {
     this.total = 0;
     this.fines = 0;
     this.log = [];
+    this.t = 0;
+    this.lastLimit = CITY_SPEED_LIMIT;
+    this.currentLimit = CITY_SPEED_LIMIT;
+    this.speedTimer = this.wrongWayTimer = this.sidewalkTimer = this.oncomingTimer = 0;
+    this.stopWaited = 0;
     this.lastNode = this.enteredNode = null;
+    this.approachDir = this.enterDir = -1;
     this.cooldown.clear();
   }
 
   private emit(code: ViolationCode, mult = 1): void {
+    // Three-second pre-drive grace lets the car/controls settle and prevents a
+    // spawn contact or seatbelt warning from becoming an instant fine.
+    if (this.t < 3) return;
     const cd = this.cooldown.get(code) ?? 0;
     if (this.t < cd) return;
     this.cooldown.set(code, this.t + (code === 'speeding' ? 4 : 2.5));
@@ -94,7 +103,8 @@ export class RuleMonitor {
 
     // Which road / lane are we on?
     const road = this.g.roadAt(x, z);
-    this.currentLimit = CITY_SPEED_LIMIT;
+    // Keep the last matched segment's limit while traversing connector space.
+    this.currentLimit = this.lastLimit;
     if (road) {
       // Determine travel direction vs road orientation.
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
@@ -104,11 +114,15 @@ export class RuleMonitor {
       const oppEdge = along >= 0 ? road.road.back : road.road.fwd;
       if (edge) this.currentLimit = edge.lanes[0].speedLimit;
       else if (oppEdge) this.currentLimit = oppEdge.lanes[0].speedLimit;
+      if (this.currentLimit !== this.lastLimit) {
+        this.lastLimit = this.currentLimit;
+        this.speedTimer = 0;
+      }
 
       // One-way wrong direction.
       if (!edge && oppEdge && kmh > 3) {
         this.wrongWayTimer += dt;
-        if (this.wrongWayTimer > 0.8) this.emit('wrong_way');
+        if (this.wrongWayTimer > 1.2) this.emit('wrong_way');
       } else this.wrongWayTimer = 0;
 
       // Oncoming lane on a two-way road (lat sign relative to travel dir).
@@ -119,22 +133,27 @@ export class RuleMonitor {
         const solid = road.road.center === 'double_solid' || road.road.center === 'solid';
         if (overCenter) {
           this.oncomingTimer += dt;
-          if (this.oncomingTimer > 0.6) {
-            this.emit(solid ? 'oncoming_lane' : 'oncoming_lane');
-            if (solid) this.emit('solid_line');
-          }
+          if (solid && this.oncomingTimer > 0.55) this.emit('solid_line');
+          // A brief line crossing and sustained travel in the opposing lane are
+          // separate offences; do not stack both at the first sampled frame.
+          if (this.oncomingTimer > 2.0) this.emit('oncoming_lane');
         } else this.oncomingTimer = 0;
       }
       // Driving on the sidewalk.
       if (Math.abs(road.lat) > road.road.halfWidth + 0.4 && Math.abs(road.lat) < road.road.halfWidth + 4 && kmh > 3) {
         this.sidewalkTimer += dt;
-        if (this.sidewalkTimer > 0.7) this.emit('sidewalk');
+        if (this.sidewalkTimer > 1.0) this.emit('sidewalk');
       } else this.sidewalkTimer = 0;
     }
 
-    // Speeding.
-    if (kmh > this.currentLimit + 20) this.emit('speeding_major');
-    else if (kmh > this.currentLimit + 5) this.emit('speeding');
+    // Speeding requires a sustained exceedance; segment changes and one-frame
+    // integration spikes no longer create instant fines.
+    const excess = kmh - this.currentLimit;
+    if (excess > 5) {
+      this.speedTimer += dt;
+      if (excess > 20 && this.speedTimer > 0.55) this.emit('speeding_major');
+      else if (this.speedTimer > 1.25) this.emit('speeding');
+    } else if (excess < 3) this.speedTimer = 0;
 
     // Stalling (once per stall event).
     if (p.stalled) {
@@ -189,30 +208,26 @@ export class RuleMonitor {
     }
 
     if (inside && this.enteredNode !== inside) {
-      // We just entered a junction from direction `dir`.
+      // Preserve the map-matched approach direction while the vehicle yaws
+      // into a turn; instantaneous yaw inside the box is not the entry arm.
+      const enteredDir = this.lastNode === inside && this.approachDir >= 0 ? this.approachDir as Dir : dir;
       this.enteredNode = inside;
-      this.enterDir = dir;
-      const sig = inside.signal(dir, 'straight');
-      // Signal / regulator running the show.
+      this.enterDir = enteredDir;
       const reg = inside.regime();
       if (reg === 'light') {
-        const s = inside.light!.headSignal(dir);
-        if (s === 'red' || s === 'red_yellow') this.emit('red_light');
+        const signal = inside.light!.headSignal(enteredDir);
+        if (signal === 'red' || signal === 'red_yellow') this.emit('red_light');
       } else if (reg === 'regulator') {
-        const s = inside.regulator!.signal(dir, 'straight');
-        if (s === 'red') this.emit('regulator');
+        const signal = inside.regulator!.signal(enteredDir, 'straight');
+        if (signal === 'red') this.emit('regulator');
       }
-      // Priority: did we cut off a car that had the right of way? — handled by
-      // the AI (it will brake) but we still flag a blatant failure to yield.
-      if ((reg === 'permanent_sign' || reg === 'temporary_sign' || reg === 'equal') && this.violatedPriority(inside, dir)) {
+      if ((reg === 'permanent_sign' || reg === 'temporary_sign' || reg === 'equal') && this.violatedPriority(inside, enteredDir)) {
         this.emit('yield');
       }
-      // STOP sign: must have stopped before the line.
-      if (inside.approachPriority[dir] === 'stop' && reg !== 'light' && reg !== 'regulator') {
+      if (inside.approachPriority[enteredDir] === 'stop' && reg !== 'light' && reg !== 'regulator') {
         if (this.stopWaited < 1.0) this.emit('no_stop_sign');
       }
-      // No-entry.
-      if (!inside.inc[dir]) this.emit('no_entry');
+      if (!inside.inc[enteredDir]) this.emit('no_entry');
     }
 
     // While at rest just before a STOP sign, count the wait.

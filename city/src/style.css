@@ -114,3 +114,92 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
   .gauge.speed .val { font-size: 32px; }
   .hud-stats { font-size: 10.5px; max-width: 45vw; }
 }
+
+
+/* ── Avtoshahar v2 cockpit HUD ───────────────────────────────────────── */
+.drive-coach { position:absolute; left:50%; top:78px; bottom:auto; transform:translateX(-50%); min-width:310px; max-width:min(520px,70vw); padding:12px 16px; border-radius:14px; color:#f5f8fc; background:linear-gradient(135deg,rgba(12,22,38,.92),rgba(25,40,61,.88)); border:1px solid rgba(113,199,255,.32); box-shadow:0 10px 30px rgba(0,0,0,.32); backdrop-filter:blur(9px); }
+.drive-coach.danger { border-color:rgba(255,59,48,.65); background:rgba(92,20,18,.9); }
+.drive-coach > b { display:block; margin-bottom:7px; color:#8bd3ff; letter-spacing:.02em; }
+.coach-item { display:flex; gap:8px; align-items:center; color:#d8e0eb; font-size:12.5px; line-height:1.45; }
+.coach-item > span { color:#ffcc4d; font-weight:800; }
+.coach-item.done { color:#aeb9c7; }
+.coach-item.done > span { color:#39d353; }
+.coach-controls { margin-top:6px; color:#aeb8c6; font-size:11.5px; }
+
+.hud-limit { bottom:18px; display:flex; flex-direction:column; align-items:center; gap:3px; }
+.hud-limit small { display:block; padding:2px 7px; border-radius:5px; color:#d8e0ea; background:rgba(8,12,22,.56); font-size:9px; text-transform:uppercase; letter-spacing:.05em; }
+.speed-limit-sign { width:64px; height:64px; display:grid; place-items:center; border:8px solid #d51f25; border-radius:50%; background:#f7f7f4; box-shadow:0 4px 15px rgba(0,0,0,.5), inset 0 0 0 1px rgba(0,0,0,.14); }
+.speed-limit-sign.temporary { background:#f4ce35; }
+.speed-limit-sign .limit-value { display:block; color:#111; font-size:25px; font-weight:900; line-height:1; font-family:Arial,sans-serif; }
+
+.hud-cluster { align-items:center; padding:8px 10px; border-radius:18px; background:linear-gradient(145deg,rgba(8,13,23,.72),rgba(19,29,44,.58)); border:1px solid rgba(255,255,255,.08); backdrop-filter:blur(7px); }
+.gauge.speed { min-width:0; padding:0; background:none; }
+.speed-ring { --speed-angle:0deg; width:112px; height:112px; display:grid; place-items:center; border-radius:50%; background:conic-gradient(from 210deg,#39d353 0deg,#39d353 var(--speed-angle),rgba(255,255,255,.09) var(--speed-angle),rgba(255,255,255,.09) 300deg,transparent 300deg); box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 5px 18px rgba(0,0,0,.28); }
+.speed-core { width:88px; height:88px; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:50%; background:rgba(7,11,19,.92); }
+.gauge.speed .val { font-size:36px; font-variant-numeric:tabular-nums; }
+.power-bars { width:138px; display:flex; flex-direction:column; gap:4px; }
+.bar-row { display:flex; align-items:center; gap:6px; }
+.bar-row > span { width:36px; color:#9ca9b8; font-size:8px; text-align:right; text-transform:uppercase; }
+.rpm,.clutch-meter { flex:1; width:auto; height:6px; border-radius:4px; background:rgba(255,255,255,.12); overflow:hidden; }
+.clutch-fill { height:100%; width:0; border-radius:inherit; background:linear-gradient(90deg,#2bb3ff,#88dcff); transition:width .08s linear; }
+.gear { min-width:50px; text-align:center; padding:4px 12px; color:#f6f8fb; background:rgba(255,255,255,.09); }
+.gear.not-ready { color:#ffcc4d; }
+
+.touch-enabled .hud-cluster { right:322px; bottom:14px; transform:scale(.86); transform-origin:bottom right; }
+.touch-enabled .hud-limit { bottom:20px; }
+.touch-wheel { width:142px; height:142px; }
+.touch-wheel img { transition:transform .08s linear; pointer-events:none; }
+.touch-pedals { right:16px; bottom:16px; gap:8px; }
+.touch-btn { border:1px solid rgba(255,255,255,.25); color:#fff; font:700 11px/1 Inter,system-ui,sans-serif; padding:0; }
+.touch-btn.gas,.touch-btn.brk { width:76px; height:76px; }
+.touch-btn.hb,.touch-btn.clutch { width:54px; height:54px; align-self:flex-end; }
+.touch-btn.clutch { background:rgba(43,179,255,.22); }
+.touch-act { color:#fff; padding:0; cursor:pointer; }
+.touch-selector { position:absolute; right:18px; bottom:104px; display:flex; align-items:center; gap:5px; padding:5px 7px; border-radius:12px; color:#aeb8c6; background:rgba(8,12,22,.66); border:1px solid rgba(255,255,255,.1); pointer-events:auto; }
+.touch-selector > span { padding:0 4px; font-size:9px; text-transform:uppercase; }
+.touch-selector .touch-act { width:34px; height:34px; font-size:13px; }
+
+@media (max-width:900px) {
+  .hud-nav { top:8px; max-width:48vw; padding:7px 11px; font-size:11px; }
+  .nav-icon { font-size:20px; }
+  .hud-mission { top:52px; font-size:10px; }
+  .drive-coach { top:64px; bottom:auto; min-width:280px; padding:9px 12px; }
+  .touch-enabled .hud-cluster { right:286px; transform:scale(.72); }
+  .touch-btn.gas,.touch-btn.brk { width:66px; height:66px; }
+  .touch-btn.hb,.touch-btn.clutch { width:48px; height:48px; }
+  .touch-selector { bottom:92px; }
+}
+
+@media (max-width:640px) {
+  .drive-coach { top:64px; bottom:auto; max-width:62vw; min-width:0; font-size:11px; }
+  .coach-item { font-size:10px; }
+  .coach-controls { display:none; }
+  .speed-limit-sign { width:52px; height:52px; border-width:7px; }
+  .speed-limit-sign .limit-value { font-size:20px; }
+  .touch-enabled .hud-cluster { right:240px; transform:scale(.62); }
+  .touch-wheel { width:118px; height:118px; bottom:12px; left:12px; }
+  .touch-acts { top:82px; }
+  .touch-act { width:40px; height:40px; }
+}
+
+
+/* v2 menu identity */
+.card.main { position:relative; overflow:hidden; background:linear-gradient(150deg,rgba(12,20,35,.96),rgba(22,39,61,.93)); }
+.card.main::before { content:''; position:absolute; inset:-80px -140px auto; height:220px; background:radial-gradient(circle,rgba(43,179,255,.22),transparent 68%); pointer-events:none; }
+.brand-mark { position:relative; width:78px; height:78px; margin:0 auto 8px; padding:8px; border-radius:22px; background:linear-gradient(145deg,rgba(255,255,255,.13),rgba(255,255,255,.035)); border:1px solid rgba(139,211,255,.25); box-shadow:0 12px 35px rgba(0,0,0,.32); }
+.brand-mark img { width:100%; height:100%; object-fit:contain; border-radius:15px; }
+.feature-chips { display:flex; justify-content:center; flex-wrap:wrap; gap:6px; margin:-10px 0 18px; }
+.feature-chips span { padding:4px 8px; border-radius:999px; color:#a9dfff; background:rgba(43,179,255,.09); border:1px solid rgba(43,179,255,.2); font-size:9px; font-weight:700; letter-spacing:.05em; }
+
+
+/* Final touch layout: keep driving view, map and controls in separate zones. */
+.touch-enabled .minimap { top:68px; bottom:auto; left:12px; width:132px; height:132px; }
+.touch-enabled .touch-wheel { left:16px; bottom:14px; }
+.touch-enabled .hud-cluster { left:170px; right:auto; top:auto; bottom:12px; transform:scale(.66); transform-origin:bottom left; }
+.touch-enabled .touch-acts .touch-act:nth-child(3) { color:#ff665e; }
+.touch-enabled .touch-acts .touch-act:nth-child(4) { color:#b9e8ff; }
+@media (max-width:640px) {
+  .touch-enabled .minimap { top:58px; width:108px; height:108px; }
+  .touch-enabled .touch-wheel { width:108px; height:108px; }
+  .touch-enabled .hud-cluster { left:130px; transform:scale(.56); }
+}

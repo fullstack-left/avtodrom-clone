@@ -10,6 +10,20 @@ yo'l belgilari va teksturalari asosiy Avtodrom loyihasidan
 > Traffic Rules of Uzbekistan, built with Three.js and TypeScript. Ships as
 > Web, Android APK and Windows EXE from a single codebase.
 
+## 2.0 sifat yangilanishi
+
+- Transport soni yo‘l sig‘imiga moslanadi; xavfsiz spawn, sticky chorraha
+  rezervatsiyasi, dual-lane MOBIL va lane/connector hard-gap invariantlari.
+- AI mashinalari yaqinda to‘liq GLB, o‘rtada authored LOD, uzoqda bir butun
+  sedan silueti bilan; shaffof oyna, to‘g‘ri chrome/lampa materiallari.
+- To‘rtta bino arxetipi, emissive fasadlar, tijorat qavati, parapet/HVAC,
+  curblar, tactile pad, skameyka, bekat va uch xil daraxt.
+- Qo‘l-oyoqlari shaderda animatsiyalangan rang-barang piyodalar.
+- Nexia yordamchi mufta bilan 1-uzatmada, Cobalt to‘g‘ridan-to‘g‘ri D holatida
+  boshlanadi; yumshoq input/rul, OBB collision va hysteresisli YHQ monitori.
+- Yangi HUD, haqiqiy raqamli tezlik belgisi, onboarding va to‘liq mobil P/R/N/D,
+  mufta, uzatma hamda pedal boshqaruvi.
+
 ## Xususiyatlar / Features
 
 - **Mikroskopik transport oqimi** — har bir avtomobil mustaqil agent:
@@ -68,9 +82,10 @@ JDK 17/21 va Android SDK kerak (CI'da avtomatik o'rnatiladi).
 ## Boshqaruv / Controls
 
 W/↑ gaz · S/↓ tormoz · A/D yoki ←/→ rul · Space qo'l tormozi · Q/E burilish
-chiroqlari · H avariya · L faralar · B kamar · C kamera · R/F uzatma ↑/↓
-(mexanika) · Shift mufta · N neytral · I dvigatelni yurgizish · G signal ·
-M xarita · Esc pauza. Geympad va sensorli boshqaruv qo'llab-quvvatlanadi.
+chiroqlari · H avariya · L faralar · B kamar · C kamera · Z/X uzatma −/+
+(mexanika) · Shift mufta · V Drive/1 · R Reverse · N neytral · P park · I
+dvigatelni yurgizish · G signal · M xarita · Esc pauza. Geympad va sensorli
+boshqaruv qo'llab-quvvatlanadi.
 
 ## Arxitektura / Architecture
 

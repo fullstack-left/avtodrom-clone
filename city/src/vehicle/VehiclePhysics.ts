@@ -153,7 +153,12 @@ export class VehiclePhysics {
   grip = 1;
   skid = 0; // 0..1 tyre scrub level (audio)
   limiter = false;
+  /** Assisted clutch is the default: real gears/torque, playable keyboard launch. */
+  manualAssist = true;
+  /** 0 open … 1 fully engaged, exposed for HUD feedback. */
+  clutchEngagement = 0;
   private shiftTimer = 0;
+  private manualShiftCut = 0;
 
   constructor(public spec: VehicleSpec) {
     this.engineOmega = spec.idleRpm / RAD2RPM;
@@ -164,7 +169,7 @@ export class VehiclePhysics {
     return Math.hypot(this.vx, this.vy);
   }
   get kmh(): number {
-    return Math.abs(this.vx) * 3.6;
+    return this.speed * 3.6;
   }
   get rpm(): number {
     return this.engineOmega * RAD2RPM;
@@ -187,34 +192,76 @@ export class VehiclePhysics {
   shiftUp(): void {
     const s = this.spec;
     if (s.transmission === 'automatic') {
-      const order: ('P' | 'R' | 'N' | 'D')[] = ['P', 'R', 'N', 'D'];
-      const i = order.indexOf(this.autoMode);
-      if (i < 3) this.setAuto(order[i + 1]);
-    } else if (this.gear < s.gears.length) this.gear++;
+      // One action means Drive; internal D1…D6 selection remains automatic.
+      this.setAuto('D');
+    } else if (this.gear < s.gears.length) {
+      this.gear++;
+      this.manualShiftCut = 0.28;
+    }
   }
   shiftDown(): void {
     const s = this.spec;
     if (s.transmission === 'automatic') {
-      const order: ('P' | 'R' | 'N' | 'D')[] = ['P', 'R', 'N', 'D'];
-      const i = order.indexOf(this.autoMode);
-      if (i > 0) this.setAuto(order[i - 1]);
-    } else if (this.gear > -1) this.gear--;
+      // Down/reverse action is direct and interlocked at walking speed.
+      this.setAuto('R');
+    } else if (this.gear > -1) {
+      this.gear--;
+      this.manualShiftCut = 0.28;
+    }
   }
   setAuto(m: 'P' | 'R' | 'N' | 'D'): void {
-    // Selector interlock: P/R only when (almost) stopped.
-    if ((m === 'P' || m === 'R') && Math.abs(this.vx) > 1.5) return;
+    // P/R direction changes are accepted only at walking speed.
+    if ((m === 'P' || m === 'R') && Math.abs(this.vx) > 1.2) return;
+    if (m === 'D' && this.vx < -1.2) return;
     this.autoMode = m;
     if (m === 'D') this.autoGear = 1;
   }
+  selectDrive(): void {
+    if (this.spec.transmission === 'automatic') this.setAuto('D');
+    else if (this.gear <= 0) {
+      this.gear = 1;
+      this.manualShiftCut = 0.2;
+    }
+  }
+  selectReverse(): void {
+    if (this.spec.transmission === 'automatic') this.setAuto('R');
+    else if (Math.abs(this.vx) < 1.2) {
+      this.gear = -1;
+      this.manualShiftCut = 0.25;
+    }
+  }
+  selectPark(): void {
+    if (this.spec.transmission === 'automatic') this.setAuto('P');
+    else this.gear = 0;
+  }
   neutral(): void {
     if (this.spec.transmission === 'automatic') this.setAuto('N');
-    else this.gear = 0;
+    else {
+      this.gear = 0;
+      this.clutchEngagement = 0;
+    }
   }
   start(): void {
     if (!this.running) {
       this.running = true;
       this.stalled = false;
       this.engineOmega = this.spec.idleRpm / RAD2RPM;
+      if (this.manualAssist) this.clutchEngagement = 0;
+    }
+  }
+
+  /** Ready-to-drive spawn used by free, mission and exam modes. */
+  prepareForDriving(): void {
+    this.running = true;
+    this.stalled = false;
+    this.engineOmega = this.spec.idleRpm / RAD2RPM;
+    if (this.spec.transmission === 'automatic') {
+      this.autoMode = 'D';
+      this.autoGear = 1;
+    } else {
+      this.gear = this.manualAssist ? 1 : 0;
+      this.clutchEngagement = 0;
+      this.manualShiftCut = 0;
     }
   }
 
@@ -270,11 +317,15 @@ export class VehiclePhysics {
     const R = s.tireRadius;
     const mu = 1.0 * this.grip;
 
-    // Steering (rate limited, speed-sensitive for keyboard/touch users).
+    // Speed-sensitive steering. Full parking lock remains available below
+    // walking speed, while a digital key cannot request 28–35° at urban speed.
     const vAbs = Math.abs(this.vx);
-    const sens = 1 / (1 + (vAbs / 22) * (vAbs / 22));
-    const target = c.steer * (s.maxSteerDeg * Math.PI / 180) * (0.35 + 0.65 * sens);
-    const maxRate = 2.2 * dt;
+    const steeringScale = 0.14 + 0.86 / (1 + Math.pow(vAbs / 7.0, 1.75));
+    const target = c.steer * (s.maxSteerDeg * Math.PI / 180) * steeringScale;
+    const speedBlend = smoothstep(2, 20, vAbs);
+    const rate = 2.0 + (0.62 - 2.0) * speedBlend;
+    const returnBoost = Math.abs(c.steer) < 0.05 ? 1.45 : 1;
+    const maxRate = rate * returnBoost * dt;
     this.steerAngle += Math.max(-maxRate, Math.min(maxRate, target - this.steerAngle));
     const delta = this.steerAngle;
 
@@ -303,22 +354,46 @@ export class VehiclePhysics {
     if (!this.running) Te = -drag * 2;
 
     if (s.transmission === 'manual') {
-      const engage = ratio === 0 ? 0 : 1 - Math.min(1, Math.max(0, c.clutch));
+      this.manualShiftCut = Math.max(0, this.manualShiftCut - dt);
+      let engage: number;
+      if (this.manualAssist) {
+        // Automatic clutch assistance retains the real clutch torque limit and
+        // gear ratios, but ramps through the bite point for binary keyboards.
+        const speedPart = smoothstep(0.25, 4.8, vAbs);
+        const rpmProtection = Math.max(0.12, Math.min(1, (rpm - 430) / Math.max(450, s.idleRpm + 350 - 430)));
+        let targetEngagement = (0.25 + throttle * 0.5 + speedPart * 0.65) * rpmProtection;
+        if (c.brake > 0.2 && vAbs < 0.8) targetEngagement = 0;
+        if (this.manualShiftCut > 0 || ratio === 0) targetEngagement = 0;
+        if (ratio * this.vx < -0.35) targetEngagement = 0;
+        targetEngagement = Math.max(0, Math.min(1, targetEngagement));
+        const clutchRate = targetEngagement > this.clutchEngagement ? 1.4 : 3.4;
+        this.clutchEngagement += Math.max(-clutchRate * dt, Math.min(clutchRate * dt, targetEngagement - this.clutchEngagement));
+        engage = Math.min(this.clutchEngagement, 1 - Math.min(1, Math.max(0, c.clutch)));
+      } else {
+        engage = ratio === 0 ? 0 : 1 - Math.min(1, Math.max(0, c.clutch));
+        this.clutchEngagement = engage;
+      }
+      if (ratio === 0) engage = 0;
       const Tmax = s.clutchMaxTorque * engage * engage;
       const slip = this.engineOmega - inOmega;
-      // Lock when the clutch can hold the required torque.
-      const lockTorque = Te - (s.engineInertia * slip) / dt;
+      // To drive slip to zero: Tc = Te + I*slip/dt (the previous minus sign
+      // snapped RPM in the wrong direction and caused false stalls).
+      const lockTorque = Te + (s.engineInertia * slip) / dt;
       let Tc: number;
-      if (engage > 0.98 && Math.abs(lockTorque) <= Tmax) {
-        Tc = Te; // locked — engine follows the wheels
+      const lockThreshold = this.manualAssist ? 0.82 : 0.985;
+      if (engage > lockThreshold && Math.abs(lockTorque) <= Tmax) {
+        Tc = lockTorque;
         this.engineOmega = inOmega;
       } else {
         Tc = Math.sign(slip) * Math.min(Tmax, Math.abs(slip) * 60 * engage);
         this.engineOmega += ((Te - Tc) / s.engineInertia) * dt;
       }
       driveTorqueWheel = Tc * ratio * s.efficiency;
-      // Stall: engine dragged below 300 rpm in gear.
-      if (this.running && this.rpm < 300 && engage > 0.5) {
+      if (this.manualAssist && this.rpm < s.idleRpm * 0.62) {
+        // Stall protection opens the clutch and lets the idle governor recover.
+        this.clutchEngagement = Math.min(this.clutchEngagement, 0.08);
+        this.engineOmega += ((s.idleRpm / RAD2RPM) - this.engineOmega) * Math.min(1, dt * 7);
+      } else if (!this.manualAssist && this.running && this.rpm < 300 && engage > 0.5) {
         this.running = false;
         this.stalled = true;
       }
@@ -360,7 +435,8 @@ export class VehiclePhysics {
     brakeF = Math.min(brakeF, mu * Fzf * 0.95);
     const rearLocked = c.handbrake && brakeR > mu * Fzr;
     brakeR = Math.min(brakeR, mu * Fzr * (c.handbrake ? 1 : 0.95));
-    FxF = Math.max(-mu * Fzf, Math.min(mu * Fzf, FxF));
+    const tractiveLimit = Math.min(mu * Fzf, m * (s.transmission === 'automatic' ? 3.05 : 3.2));
+    FxF = Math.max(-tractiveLimit, Math.min(tractiveLimit, FxF));
     const stopHold = Math.abs(this.vx) < 0.25 && (brakeT + hbT > 50);
     let FxBrakeF = 0, FxBrakeR = 0;
     if (!stopHold) {
@@ -402,12 +478,17 @@ export class VehiclePhysics {
       this.vx *= 0.5;
       if (Math.abs(this.vx) < 0.02) this.vx = 0;
     }
-    // Low-speed kinematic blend (tyre model is singular at standstill).
-    const blend = Math.max(0, 1 - Math.abs(this.vx) / 2.5);
+    // Smooth low-speed kinematic/dynamic blend; no sharp character change at
+    // 2.5 m/s. Mild stability control damps excessive yaw when not commanded.
+    const blend = 1 - smoothstep(0.7, 4.2, Math.abs(this.vx));
     if (blend > 0) {
       const rKin = (this.vx * Math.tan(delta)) / L;
-      this.r += (rKin - this.r) * blend * Math.min(1, dt * 20);
-      this.vy *= 1 - blend * Math.min(1, dt * 20);
+      this.r += (rKin - this.r) * blend * Math.min(1, dt * 13);
+      this.vy *= 1 - blend * Math.min(1, dt * 12);
+    }
+    if (vAbs > 7 && Math.abs(c.steer) < 0.18 && this.skid > 0.2) {
+      this.r *= Math.max(0, 1 - dt * (0.7 + this.skid * 1.4));
+      this.vy *= Math.max(0, 1 - dt * this.skid * 0.8);
     }
 
     // Integrate pose.
@@ -419,22 +500,24 @@ export class VehiclePhysics {
     this.wheelSpin += (this.vx / R) * dt;
   }
 
-  /** Apply an impulse-based collision response along world normal (nx,nz). */
-  collide(nx: number, nz: number, depth: number, restitution = 0.25): number {
+  /** Apply an impulse response using relative obstacle velocity and mass. */
+  collide(nx: number, nz: number, depth: number, restitution = 0.25, otherVx = 0, otherVz = 0, otherMass = Infinity): number {
     this.x += nx * depth;
     this.z += nz * depth;
     const vxw = this.vxWorld, vzw = this.vzWorld;
-    const vn = vxw * nx + vzw * nz;
-    if (vn >= 0) return 0;
-    const nvx = vxw - (1 + restitution) * vn * nx;
-    const nvz = vzw - (1 + restitution) * vn * nz;
+    const relativeN = (vxw - otherVx) * nx + (vzw - otherVz) * nz;
+    if (relativeN >= 0) return 0;
+    const share = Number.isFinite(otherMass) ? otherMass / (this.spec.mass + otherMass) : 1;
+    const impulse = (1 + restitution) * relativeN * share;
+    const nvx = vxw - impulse * nx;
+    const nvz = vzw - impulse * nz;
     // back to body frame
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
     const lx = -Math.cos(this.yaw), lz = Math.sin(this.yaw);
     this.vx = nvx * fx + nvz * fz;
     this.vy = nvx * lx + nvz * lz;
-    this.r *= 0.6;
-    return -vn;
+    this.r *= 0.62;
+    return -relativeN;
   }
 
   reset(x: number, z: number, yaw: number): void {
@@ -446,8 +529,16 @@ export class VehiclePhysics {
     this.running = true;
     this.stalled = false;
     this.engineOmega = this.spec.idleRpm / RAD2RPM;
-    this.gear = 0;
-    this.autoMode = this.spec.transmission === 'automatic' ? 'P' : 'N';
+    this.gear = this.spec.transmission === 'manual' && this.manualAssist ? 1 : 0;
+    this.autoMode = this.spec.transmission === 'automatic' ? 'D' : 'N';
     this.autoGear = 1;
+    this.clutchEngagement = 0;
+    this.manualShiftCut = 0;
+    this.shiftTimer = 0;
   }
+}
+
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a || 1)));
+  return t * t * (3 - 2 * t);
 }

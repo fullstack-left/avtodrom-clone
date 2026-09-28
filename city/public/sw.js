@@ -1,7 +1,7 @@
 // Minimal offline cache for the PWA build. Caches the app shell and streams
 // large assets (GLB/HDR/textures) into a runtime cache on first use.
-const SHELL = 'avtoshahar-shell-v1';
-const RUNTIME = 'avtoshahar-runtime-v1';
+const SHELL = 'avtoshahar-shell-v2';
+const RUNTIME = 'avtoshahar-runtime-v2';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();

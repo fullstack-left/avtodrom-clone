@@ -98,6 +98,7 @@ export class Game {
     this.mode = mode;
     const spec = this.settings.car === 'cobalt_at' ? COBALT_AT : NEXIA2;
     this.phys = new VehiclePhysics(spec);
+    this.phys.manualAssist = this.settings.manualAssist;
     this.car = new PlayerCar(this.phys, 0xdfe4ea);
     await this.car.load(this.settings.quality);
     this.car.onBlink = (on) => this.settings.sound && this.audio.tick(on ? 'on' : 'off');
@@ -106,13 +107,19 @@ export class Game {
     this.monitor.examMode = mode === 'exam';
     this.collisions = new Collisions(this.phys, this.sim, this.peds, this.world);
 
-    // Density.
-    const maxCars = this.settings.quality === 'low' ? 900 : this.settings.quality === 'medium' ? 1800 : 3200;
-    const n = mode === 'spectate' ? maxCars : Math.round(200 + this.settings.density * (maxCars - 200));
+    // Traffic demand is calibrated from lane-kilometres, independent of
+    // renderer quality. Quality only controls representation/culling.
+    const n = this.sim.calibratedCount(this.settings.density, mode === 'spectate');
     this.sim.setCount(n);
     this.peds.setCount(this.settings.pedestrians ? (this.settings.quality === 'low' ? 120 : 400) : 0);
-    // Warm up the simulation so the city is already busy.
-    for (let i = 0; i < 240; i++) this.sim.step(1 / 30);
+    // Warm the same control/pedestrian/traffic ordering used by live ticks.
+    // This avoids filling a city against frozen red lights and empty zebras.
+    const warmStep = 1 / 30;
+    for (let i = 0; i < 240; i++) {
+      this.graph.update(warmStep);
+      this.peds.update(warmStep);
+      this.sim.step(warmStep);
+    }
 
     this.trafficRenderer.setNight(this.engine.night);
     this.monitor.setDark(this.engine.night > 0.5 || this.settings.weather === 'fog');
@@ -158,10 +165,10 @@ export class Game {
     const z = lane.zs[0] + (lane.zs[1] - lane.zs[0]) * t2;
     const yaw = Math.atan2(-(lane.xs[1] - lane.xs[0]), -(lane.zs[1] - lane.zs[0]));
     this.phys.reset(x, z, yaw);
-    // Clear AI cars around the spawn.
-    for (let i = 0; i < this.sim.count; i++) {
-      if (Math.hypot(this.sim.x[i] - x, this.sim.z[i] - z) < 14) this.sim.v[i] = 0;
-    }
+    this.phys.prepareForDriving();
+    // Rehome AI state, including reservations and lane-change occupancy; merely
+    // zeroing speed leaves canonical overlaps and an immediate collision.
+    this.sim.clearPlayerArea(x, z, 20);
     this.startEdge = this.nav.currentEdge(x, z, yaw);
     if (this.startEdge < 0) this.startEdge = lane.edge.id;
   }
@@ -221,6 +228,9 @@ export class Game {
     if (inp.take('cycleCamera')) this.cameraRig.cycle();
     if (inp.take('gearUp')) this.phys.shiftUp();
     if (inp.take('gearDown')) this.phys.shiftDown();
+    if (inp.take('selectDrive')) this.phys.selectDrive();
+    if (inp.take('selectReverse')) this.phys.selectReverse();
+    if (inp.take('selectPark')) this.phys.selectPark();
     if (inp.take('neutral')) this.phys.neutral();
     if (inp.take('startEngine')) {
       this.phys.start();
@@ -258,8 +268,10 @@ export class Game {
       } else P.dIn = -1;
     } else this.sim.player.active = false;
 
-    this.sim.step(dt);
+    // Publish pedestrian occupancy before atomic vehicle admission so neither
+    // side enters a crossing from a stale empty snapshot.
     this.peds.update(dt);
+    this.sim.step(dt);
 
     if (this.mode !== 'spectate') {
       this.phys.grip = this.settings.weather === 'rain' ? 0.75 : this.settings.weather === 'fog' ? 0.92 : 1;
@@ -275,9 +287,16 @@ export class Game {
         this.audio.crash();
         this.onCrash?.();
       }
-      // cross traffic near junction for the priority check
-      const near = this.sim.near(this.phys.x, this.phys.z, 16, this.aiBuf).length > 0;
-      this.monitor.setCrossTraffic(near);
+      // Only a moving, transverse approach can constitute conflicting traffic;
+      // same-lane followers and parked neighbours must not cause yield fines.
+      const nearby = this.sim.near(this.phys.x, this.phys.z, 18, this.aiBuf);
+      const pfx = -Math.sin(this.phys.yaw), pfz = -Math.cos(this.phys.yaw);
+      const crossTraffic = nearby.some((i) => {
+        if (this.sim.v[i] < 1.2) return false;
+        const afx = -Math.sin(this.sim.yaw[i]), afz = -Math.cos(this.sim.yaw[i]);
+        return Math.abs(pfx * afx + pfz * afz) < 0.62;
+      });
+      this.monitor.setCrossTraffic(crossTraffic);
       this.monitor.update(dt, col.ai, col.ped, col.obj);
       this.audio.update(this.phys);
     }
@@ -311,15 +330,22 @@ export class Game {
   }
 
   private routeCache: Float32Array | null = null;
+  private routeRef: number[] | null = null;
   private routePoly(): Float32Array | null {
-    // MiniMap uses the same poly the ribbon was built from; recompute lazily.
-    if (!this.nav.route) return null;
+    if (!this.nav.route) {
+      this.routeRef = null;
+      this.routeCache = null;
+      return null;
+    }
+    if (this.routeRef === this.nav.route && this.routeCache) return this.routeCache;
     const pts: number[] = [];
     for (const e of this.nav.route) {
       const ed = this.graph.edges[e];
       pts.push(ed.from.x, ed.from.z, ed.to.x, ed.to.z);
     }
-    return new Float32Array(pts);
+    this.routeRef = this.nav.route;
+    this.routeCache = new Float32Array(pts);
+    return this.routeCache;
   }
 
   private async updateMissions(): Promise<void> {
@@ -373,14 +399,30 @@ export class Game {
   }
 
   private updateStats(): void {
+    const metrics = this.sim.getMetrics();
     const rows = [
       `${t('fps')}: <b>${this.fps.toFixed(0)}</b>`,
-      `${t('cars')}: <b>${this.sim.count}</b> <small>(${this.trafficRenderer.visibleNear}+${this.trafficRenderer.visibleFar})</small>`,
+      `${t('cars')}: <b>${metrics.activeVehicles}/${metrics.targetVehicles}</b> <small>(${this.trafficRenderer.visibleClose}+${this.trafficRenderer.visibleMid}+${this.trafficRenderer.visibleFar})</small>`,
       `${t('avg_speed')}: <b>${this.sim.avgSpeedKmh().toFixed(0)}</b> km/h`,
-      `${t('lane_changes')}: <b>${this.sim.laneChanges}</b>`,
+      `${t('stopped_fraction')}: <b>${Math.round(metrics.stoppedFraction * 100)}%</b>`,
+      `${t('reservations')}: <b>${metrics.activeReservations}</b>`,
       `${t('throughput')}: <b>${this.sim.junctionPasses}</b>`,
     ];
     this.hud.setStats(rows.join(' · '));
+    if (this.mode !== 'spectate' && this.phys) {
+      // Machine-readable telemetry for wrapper diagnostics and release smoke
+      // checks; no internal object graph is exposed globally.
+      this.canvas.dataset.speed = this.phys.kmh.toFixed(2);
+      this.canvas.dataset.forwardSpeed = this.phys.vx.toFixed(3);
+      this.canvas.dataset.rpm = this.phys.rpm.toFixed(0);
+      this.canvas.dataset.throttle = this.input.state.throttle.toFixed(2);
+      this.canvas.dataset.clutch = this.phys.clutchEngagement.toFixed(2);
+      this.canvas.dataset.acceleration = this.phys.ax.toFixed(3);
+      this.canvas.dataset.brake = this.input.state.brake.toFixed(2);
+      this.canvas.dataset.handbrake = String(this.input.state.handbrake);
+      this.canvas.dataset.position = `${this.phys.x.toFixed(2)},${this.phys.z.toFixed(2)}`;
+      this.canvas.dataset.gear = this.phys.gearLabel();
+    }
   }
 
   restart(): void {

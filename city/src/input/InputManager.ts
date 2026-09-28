@@ -16,6 +16,9 @@ export interface InputState {
   cycleCamera: boolean;
   gearUp: boolean;
   gearDown: boolean;
+  selectDrive: boolean;
+  selectReverse: boolean;
+  selectPark: boolean;
   neutral: boolean;
   startEngine: boolean;
   horn: boolean;
@@ -27,7 +30,8 @@ export interface InputState {
 const ZERO = (): InputState => ({
   throttle: 0, brake: 0, steer: 0, clutch: 0, handbrake: false,
   toggleIndicatorLeft: false, toggleIndicatorRight: false, toggleHazard: false, toggleHeadlights: false,
-  toggleSeatbelt: false, cycleCamera: false, gearUp: false, gearDown: false, neutral: false,
+  toggleSeatbelt: false, cycleCamera: false, gearUp: false, gearDown: false,
+  selectDrive: false, selectReverse: false, selectPark: false, neutral: false,
   startEngine: false, horn: false, toggleMap: false, pause: false, respawn: false,
 });
 
@@ -36,9 +40,13 @@ export class InputManager {
   private keys = new Set<string>();
   private edges = ZERO();
   private prevGamepad: Record<number, boolean> = {};
-  touch = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+  touch = { throttle: 0, brake: 0, steer: 0, clutch: 0, handbrake: false };
   hasTouch = false;
   private listeners: (() => void)[] = [];
+  private lastUpdate = performance.now();
+  private filteredThrottle = 0;
+  private filteredBrake = 0;
+  private filteredSteer = 0;
 
   constructor() {
     const kd = (e: KeyboardEvent) => {
@@ -50,14 +58,26 @@ export class InputManager {
     const ku = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
     window.addEventListener('keydown', kd);
     window.addEventListener('keyup', ku);
-    this.listeners.push(() => window.removeEventListener('keydown', kd), () => window.removeEventListener('keyup', ku));
+    const release = () => this.releaseControls();
+    const visibility = () => {
+      if (document.hidden) release();
+    };
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', visibility);
+    this.listeners.push(
+      () => window.removeEventListener('keydown', kd),
+      () => window.removeEventListener('keyup', ku),
+      () => window.removeEventListener('blur', release),
+      () => document.removeEventListener('visibilitychange', visibility),
+    );
     this.hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
   }
 
   private onKey(k: string, e: KeyboardEvent): void {
     const map: Record<string, keyof InputState> = {
       q: 'toggleIndicatorLeft', e: 'toggleIndicatorRight', h: 'toggleHazard', l: 'toggleHeadlights',
-      b: 'toggleSeatbelt', c: 'cycleCamera', r: 'gearUp', f: 'gearDown', n: 'neutral', i: 'startEngine',
+      b: 'toggleSeatbelt', c: 'cycleCamera', x: 'gearUp', z: 'gearDown', f: 'gearDown',
+      v: 'selectDrive', r: 'selectReverse', p: 'selectPark', n: 'neutral', i: 'startEngine',
       g: 'horn', m: 'toggleMap', escape: 'pause', t: 'respawn',
     };
     if (map[k]) {
@@ -73,7 +93,25 @@ export class InputManager {
     return v;
   }
 
+  /** Programmatically queue an edge action (touch UI / accessibility). */
+  trigger(name: keyof InputState): void {
+    if (typeof this.edges[name] === 'boolean') (this.edges as any)[name] = true;
+  }
+
+  /** Release every continuous control after blur, cancel or app backgrounding. */
+  releaseControls(): void {
+    this.keys.clear();
+    this.touch.throttle = this.touch.brake = this.touch.steer = this.touch.clutch = 0;
+    this.touch.handbrake = false;
+    this.filteredThrottle = this.filteredBrake = this.filteredSteer = 0;
+    this.state.throttle = this.state.brake = this.state.steer = 0;
+    this.state.handbrake = false;
+  }
+
   update(): void {
+    const now = performance.now();
+    const dt = Math.max(1 / 240, Math.min(0.05, (now - this.lastUpdate) / 1000));
+    this.lastUpdate = now;
     const s = this.state;
     const K = (c: string) => this.keys.has(c);
     // Analog from keyboard.
@@ -113,16 +151,23 @@ export class InputManager {
     }
 
     // Touch overrides.
-    if (this.hasTouch && (this.touch.throttle || this.touch.brake || this.touch.steer || this.touch.handbrake)) {
+    if (this.hasTouch && (this.touch.throttle || this.touch.brake || this.touch.steer || this.touch.clutch || this.touch.handbrake)) {
       throttle = Math.max(throttle, this.touch.throttle);
       brake = Math.max(brake, this.touch.brake);
       steer = this.touch.steer || steer;
+      clutch = Math.max(clutch, this.touch.clutch);
       handbrake = handbrake || this.touch.handbrake;
     }
 
-    s.throttle = clamp01(throttle);
-    s.brake = clamp01(brake);
-    s.steer = Math.max(-1, Math.min(1, steer));
+    const targetThrottle = clamp01(throttle);
+    const targetBrake = clamp01(brake);
+    const targetSteer = Math.max(-1, Math.min(1, steer));
+    this.filteredThrottle = approach(this.filteredThrottle, targetThrottle, (targetThrottle > this.filteredThrottle ? 2.8 : 4.5) * dt);
+    this.filteredBrake = approach(this.filteredBrake, targetBrake, (targetBrake > this.filteredBrake ? 5.5 : 7.0) * dt);
+    this.filteredSteer = approach(this.filteredSteer, targetSteer, (Math.abs(targetSteer) > Math.abs(this.filteredSteer) ? 2.7 : 4.2) * dt);
+    s.throttle = this.filteredThrottle;
+    s.brake = this.filteredBrake;
+    s.steer = this.filteredSteer;
     s.clutch = clamp01(clutch);
     s.handbrake = handbrake;
     // Copy edges into state (read by the game, then cleared with take()).
@@ -144,3 +189,4 @@ function deadzone(v: number, dz = 0.12): number {
   return Math.abs(v) < dz ? 0 : (v - Math.sign(v) * dz) / (1 - dz);
 }
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const approach = (value: number, target: number, amount: number) => value < target ? Math.min(target, value + amount) : Math.max(target, value - amount);
