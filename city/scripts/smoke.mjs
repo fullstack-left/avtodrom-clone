@@ -70,7 +70,7 @@ try {
   }
   if (!clicked) throw new Error(`mode button not found: ${mode}`);
   await page.waitForFunction(() => document.getElementById('loading')?.style.display === 'none', { timeout: 45000 });
-  await page.waitForSelector('.hud-stats', { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('.hud-stats')?.textContent?.includes('FPS'), { timeout: 60000 });
   await page.waitForTimeout(2500);
 
   let peakSpeed = 0;
