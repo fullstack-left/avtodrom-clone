@@ -128,8 +128,12 @@ export class WorldBuilder {
     for (let j = 0; j < g.ny; j++) this.hwH[j] = g.node(0, j)!.arms[0]!.halfWidth;
     this.buildGround();
     this.buildMarkings();
-    this.buildBlocks();
+    // Place fixed roadside infrastructure before vegetation so trees can avoid
+    // lamp/sign footprints instead of intersecting them.
     this.buildStreetFurniture();
+    this.buildBlocks();
+    this.buildCurbDetails();
+    this.buildStreetAmenities();
     this.buildSigns();
     this.buildTrafficLights();
     this.buildOfficer();
@@ -170,7 +174,7 @@ export class WorldBuilder {
     for (const t of [aAlb, aNor, aArm]) t.repeat.set(W / 7, H / 7);
     const asphaltMat = new THREE.MeshStandardMaterial({ map: aAlb, normalMap: aNor, roughnessMap: aArm, roughness: 1, metalness: 0, color: 0x9a9a9a });
     asphaltMat.normalScale.set(0.6, 0.6);
-    this.engine.onEnvChange.push(() => {
+    this.engine.subscribeEnvironment(() => {
       const wet = this.engine.weather === 'rain';
       asphaltMat.roughness = wet ? 0.35 : 1;
       asphaltMat.color.set(wet ? 0x6f6f6f : 0x9a9a9a);
@@ -372,7 +376,7 @@ export class WorldBuilder {
   // ─── Blocks, buildings, parks, parking ──────────────────────────────────
 
   private facadeTextures(): [THREE.Texture, THREE.Texture] {
-    const S = 256;
+    const S = 512;
     const mk = () => {
       const c = document.createElement('canvas');
       c.width = c.height = S;
@@ -380,33 +384,55 @@ export class WorldBuilder {
     };
     const cA = mk(), cE = mk();
     const a = cA.getContext('2d')!, e = cE.getContext('2d')!;
-    a.fillStyle = '#d8d2c8';
+    const r = mulberry32(99);
+    a.fillStyle = '#d9d5cc';
     a.fillRect(0, 0, S, S);
     e.fillStyle = '#000';
     e.fillRect(0, 0, S, S);
-    // 4 × 4 windows per 12 m tile; texel (0.02, 0.02) (bottom-left) stays wall.
-    const r = mulberry32(99);
-    for (let fy = 0; fy < 4; fy++)
-      for (let fx = 0; fx < 4; fx++) {
-        const x = fx * 64 + 14, y = fy * 64 + 12, w = 36, h = 40;
-        a.fillStyle = '#3d4b5c';
+    // Subtle plaster/panel modulation prevents one perfectly flat wall colour.
+    for (let y = 0; y < S; y += 4) {
+      const l = 210 + Math.floor(r() * 18);
+      a.fillStyle = `rgba(${l},${l - 3},${l - 8},0.12)`;
+      a.fillRect(0, y, S, 2);
+    }
+    const cols = 4, rows = 5;
+    const cellW = S / cols, cellH = S / rows;
+    for (let fy = 0; fy < rows; fy++)
+      for (let fx = 0; fx < cols; fx++) {
+        const x = fx * cellW + 25, y = fy * cellH + 18;
+        const w = cellW - 50, h = cellH - 35;
+        // Recess + frame + reflective pane + mullion + sill.
+        a.fillStyle = '#858b90';
+        a.fillRect(x - 6, y - 6, w + 12, h + 12);
+        const cool = 42 + Math.floor(r() * 22);
+        a.fillStyle = `rgb(${cool},${cool + 12},${cool + 22})`;
         a.fillRect(x, y, w, h);
-        a.fillStyle = 'rgba(255,255,255,0.18)';
-        a.fillRect(x, y, w, 6);
-        a.fillStyle = '#9aa3ad';
-        a.fillRect(x - 2, y + h, w + 4, 4);
-        if (r() < 0.45) {
-          e.fillStyle = r() < 0.7 ? '#ffcf8a' : '#cfe3ff';
-          e.fillRect(x, y, w, h);
+        const grad = a.createLinearGradient(x, y, x + w, y + h);
+        grad.addColorStop(0, 'rgba(205,226,241,0.34)');
+        grad.addColorStop(0.5, 'rgba(85,109,130,0.04)');
+        grad.addColorStop(1, 'rgba(235,220,195,0.18)');
+        a.fillStyle = grad;
+        a.fillRect(x, y, w, h);
+        a.fillStyle = 'rgba(215,220,222,0.7)';
+        a.fillRect(x + w / 2 - 2, y, 4, h);
+        a.fillStyle = '#a9a59c';
+        a.fillRect(x - 8, y + h + 5, w + 16, 5);
+        if (r() < 0.42) {
+          e.fillStyle = r() < 0.72 ? '#ffd29a' : '#bad8ff';
+          e.fillRect(x + 2, y + 2, w / 2 - 5, h - 4);
+          if (r() < 0.65) e.fillRect(x + w / 2 + 3, y + 2, w / 2 - 5, h - 4);
         }
       }
-    a.fillStyle = '#d8d2c8';
-    a.fillRect(0, S - 10, 10, 10);
+    // Stable unlit wall texel used by roof faces in the shader.
+    a.fillStyle = '#cbc8c1';
+    a.fillRect(0, S - 16, 16, 16);
     const tA = new THREE.CanvasTexture(cA);
     const tE = new THREE.CanvasTexture(cE);
     for (const t of [tA, tE]) {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.anisotropy = 4;
+      t.anisotropy = this.quality === 'high' ? 8 : 4;
+      t.generateMipmaps = true;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
     }
     tA.colorSpace = THREE.SRGBColorSpace;
     tE.colorSpace = THREE.SRGBColorSpace;
@@ -487,11 +513,12 @@ export class WorldBuilder {
     this.group.add(pg);
     if (lotLines.pos.length) this.group.add(new THREE.Mesh(lotLines.geometry(), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2 })));
 
-    // Buildings: one InstancedMesh, UVs scaled per instance in the shader.
+    // Shared facade material: instance scale drives metre-consistent windows
+    // on every archetype while horizontal faces sample a dedicated roof texel.
     const [fa, fe] = this.facadeTextures();
     this.engine.track(fa);
     this.engine.track(fe);
-    const bmat = new THREE.MeshStandardMaterial({ map: fa, emissiveMap: fe, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.85 });
+    const bmat = new THREE.MeshStandardMaterial({ map: fa, emissiveMap: fe, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.78, metalness: 0.02 });
     bmat.onBeforeCompile = (sh) => {
       sh.vertexShader = sh.vertexShader.replace(
         '#include <uv_vertex>',
@@ -499,29 +526,59 @@ export class WorldBuilder {
         {
           vec3 isc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
           float fw = abs(normal.x) > 0.5 ? isc.z : isc.x;
-          vec2 sUv = vec2(uv.x * fw / 12.0, uv.y * isc.y / 12.0);
+          vec2 sUv = vec2(uv.x * fw / 12.0, uv.y * isc.y / 15.0);
           if (abs(normal.y) > 0.5) sUv = vec2(0.01, 0.01);
           vMapUv = sUv;
           vEmissiveMapUv = sUv;
         }`,
       );
     };
+    bmat.customProgramCacheKey = () => 'avtoshahar-facade-v2';
     this.windowMat = bmat;
-    const bgeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-    const bmesh = new THREE.InstancedMesh(bgeo, bmat, bld.length);
-    const m = new THREE.Matrix4();
-    const col = new THREE.Color();
+
+    // Four facade-compatible building archetypes: slab, stepped tower,
+    // podium tower and corner/L block. Geometry is still instanced and uses
+    // the same shader/material, but the skyline is no longer a field of boxes.
+    const part = (sx: number, sy: number, sz: number, x: number, y: number, z: number) => new THREE.BoxGeometry(sx, sy, sz).translate(x, y, z);
+    const mergeParts = (parts: THREE.BufferGeometry[]) => {
+      const merged = mergeGeometries(parts, false)!;
+      for (const p of parts) p.dispose();
+      return merged;
+    };
+    const archetypes = [
+      part(1, 1, 1, 0, 0.5, 0),
+      mergeParts([part(1, 0.58, 1, 0, 0.29, 0), part(0.72, 0.42, 0.72, 0.04, 0.79, -0.03)]),
+      mergeParts([part(1, 0.2, 1, 0, 0.1, 0), part(0.64, 0.8, 0.68, -0.04, 0.6, 0.02)]),
+      mergeParts([part(0.58, 1, 1, -0.21, 0.5, 0), part(0.42, 1, 0.58, 0.29, 0.5, 0.21)]),
+    ];
+    const buckets: number[][] = archetypes.map(() => []);
     bld.forEach((b, k) => {
-      m.makeScale(b.w, b.h, b.d).setPosition(b.x, H, b.z);
-      bmesh.setMatrixAt(k, m);
-      bmesh.setColorAt(k, col.setHex(b.c));
+      const archetype = b.h < 14 ? 0 : (k * 7 + Math.floor(b.h / 12)) % archetypes.length;
+      buckets[archetype].push(k);
       this.buildings.push({ x0: b.x - b.w / 2, x1: b.x + b.w / 2, z0: b.z - b.d / 2, z1: b.z + b.d / 2, h: b.h });
     });
-    bmesh.castShadow = true;
-    bmesh.receiveShadow = true;
-    bmesh.computeBoundingSphere();
-    this.group.add(bmesh);
-    this.engine.onEnvChange.push(() => (bmat.emissiveIntensity = this.engine.night * 1.1));
+    const m = new THREE.Matrix4();
+    const col = new THREE.Color();
+    buckets.forEach((indices, archetype) => {
+      if (!indices.length) {
+        archetypes[archetype].dispose();
+        return;
+      }
+      const mesh = new THREE.InstancedMesh(archetypes[archetype], bmat, indices.length);
+      indices.forEach((source, slot) => {
+        const b = bld[source];
+        m.makeScale(b.w, b.h, b.d).setPosition(b.x, H, b.z);
+        mesh.setMatrixAt(slot, m);
+        mesh.setColorAt(slot, col.setHex(b.c));
+      });
+      mesh.name = `Building archetype ${archetype}`;
+      mesh.castShadow = this.quality !== 'low';
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      this.group.add(mesh);
+    });
+    this.buildArchitecturalDetails(bld, H);
+    this.engine.subscribeEnvironment(() => (bmat.emissiveIntensity = this.engine.night * 1.1));
 
     // Trees along sidewalks.
     for (const road of g.roads) {
@@ -538,7 +595,198 @@ export class WorldBuilder {
         }
       }
     }
-    this.buildTrees(trees);
+    const reservedTrees = trees.filter((t) => {
+      if (this.circles.some((c) => Math.hypot(c.x - t.x, c.z - t.z) < c.r + 1.65 * t.s)) return false;
+      if (this.g.signs.some((s) => Math.hypot(s.x - t.x, s.z - t.z) < 2.1 * t.s)) return false;
+      if (this.g.crosswalks.some((cw) => Math.hypot(cw.cx - t.x, cw.cz - t.z) < cw.halfLen + 3)) return false;
+      return true;
+    });
+    this.buildTrees(reservedTrees);
+  }
+
+  /**
+   * Adds depth cues that the base facade texture cannot provide: commercial
+   * ground floors, floor bands, parapets, entrance canopies, HVAC/water tanks
+   * and antennas. Every repeated part remains instanced; the uplift costs six
+   * draw calls rather than one mesh per building.
+   */
+  private buildArchitecturalDetails(bld: { x: number; z: number; w: number; d: number; h: number; c: number }[], H: number): void {
+    const bands: THREE.Matrix4[] = [];
+    const bases: THREE.Matrix4[] = [];
+    const parapets: THREE.Matrix4[] = [];
+    const canopies: THREE.Matrix4[] = [];
+    const hvac: THREE.Matrix4[] = [];
+    const tanks: THREE.Matrix4[] = [];
+    const antennas: THREE.Matrix4[] = [];
+    const m = new THREE.Matrix4();
+    const pushBox = (list: THREE.Matrix4[], x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+      list.push(new THREE.Matrix4().makeScale(sx, sy, sz).setPosition(x, y, z));
+    };
+    bld.forEach((b, i) => {
+      // A readable commercial/lobby base instead of a facade ending directly
+      // on the pavement.
+      if (b.h > 10) pushBox(bases, b.x, H + 1.35, b.z, b.w + 0.05, 2.7, b.d + 0.05);
+      const floors = Math.max(2, Math.floor(b.h / 3));
+      const bandEvery = floors > 16 ? 4 : 3;
+      for (let f = bandEvery; f < floors; f += bandEvery) pushBox(bands, b.x, H + f * 3, b.z, b.w + 0.16, 0.09, b.d + 0.16);
+
+      // Four separate parapet rails preserve a roof silhouette without a solid
+      // slab covering rooftop props.
+      const py = H + b.h + 0.32;
+      pushBox(parapets, b.x, py, b.z - b.d / 2 + 0.14, b.w + 0.28, 0.64, 0.28);
+      pushBox(parapets, b.x, py, b.z + b.d / 2 - 0.14, b.w + 0.28, 0.64, 0.28);
+      pushBox(parapets, b.x - b.w / 2 + 0.14, py, b.z, 0.28, 0.64, b.d);
+      pushBox(parapets, b.x + b.w / 2 - 0.14, py, b.z, 0.28, 0.64, b.d);
+
+      // Entrance canopy alternates facade sides between adjacent parcels.
+      const front = i % 2 === 0 ? -1 : 1;
+      pushBox(canopies, b.x, H + 2.65, b.z + front * (b.d / 2 + 0.75), Math.min(5.5, b.w * 0.34), 0.16, 1.55);
+      if (b.h > 14) {
+        const ox = ((i * 37) % 7 - 3) * 0.35;
+        const oz = ((i * 19) % 7 - 3) * 0.3;
+        pushBox(hvac, b.x + ox, H + b.h + 0.65, b.z + oz, Math.min(3.2, b.w * 0.17), 0.75, Math.min(2.5, b.d * 0.16));
+      }
+      if (b.h > 28 && i % 5 === 0) tanks.push(new THREE.Matrix4().makeScale(1.1, 1.1, 1.1).setPosition(b.x + b.w * 0.2, H + b.h + 1.2, b.z - b.d * 0.15));
+      if (b.h > 38 && i % 3 === 0) antennas.push(new THREE.Matrix4().makeScale(1, 2.5 + (i % 4), 1).setPosition(b.x - b.w * 0.18, H + b.h + 2.5, b.z + b.d * 0.12));
+    });
+
+    const addInstances = (geo: THREE.BufferGeometry, mat: THREE.Material, matrices: THREE.Matrix4[], name: string, shadows = false) => {
+      if (!matrices.length) {
+        geo.dispose();
+        mat.dispose();
+        return;
+      }
+      const mesh = new THREE.InstancedMesh(geo, mat, matrices.length);
+      matrices.forEach((mx, i) => mesh.setMatrixAt(i, mx));
+      mesh.name = name;
+      mesh.castShadow = shadows && this.quality !== 'low';
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      this.group.add(mesh);
+    };
+    addInstances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x7b8490, roughness: 0.55, metalness: 0.08 }), bands, 'Facade floor bands');
+    const lobbyMat = new THREE.MeshStandardMaterial({ color: 0x243748, roughness: 0.22, metalness: 0.34, emissive: 0xbddcff, emissiveIntensity: 0 });
+    this.engine.subscribeEnvironment(() => (lobbyMat.emissiveIntensity = this.engine.night * 0.18));
+    addInstances(new THREE.BoxGeometry(1, 1, 1), lobbyMat, bases, 'Commercial ground floors');
+    addInstances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xd2d0cb, roughness: 0.88 }), parapets, 'Roof parapets', true);
+    addInstances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x374b60, roughness: 0.45, metalness: 0.4 }), canopies, 'Entrance canopies', true);
+    addInstances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x68737d, roughness: 0.7, metalness: 0.45 }), hvac, 'Rooftop HVAC');
+    addInstances(new THREE.CylinderGeometry(0.75, 0.75, 1.2, 12), new THREE.MeshStandardMaterial({ color: 0x8794a0, roughness: 0.35, metalness: 0.65 }), tanks, 'Rooftop tanks');
+    addInstances(new THREE.CylinderGeometry(0.035, 0.06, 1, 6), new THREE.MeshStandardMaterial({ color: 0x4b5563, roughness: 0.45, metalness: 0.7 }), antennas, 'Roof antennas');
+  }
+
+  /** Raised curb lips and tactile crosswalk pads clarify road/sidewalk depth. */
+  private buildCurbDetails(): void {
+    const curb = new GeoBuf();
+    const H = 0.15;
+    const lip = 0.24;
+    const X = (i: number) => this.g.node(i, 0)!.x;
+    const Z = (j: number) => this.g.node(0, j)!.z;
+    for (let i = 0; i < this.g.nx - 1; i++)
+      for (let j = 0; j < this.g.ny - 1; j++) {
+        const x0 = X(i) + this.hwV[i], x1 = X(i + 1) - this.hwV[i + 1];
+        const z0 = Z(j) + this.hwH[j], z1 = Z(j + 1) - this.hwH[j + 1];
+        curb.box(x0, x1, H, H + 0.11, z0, z0 + lip, 1);
+        curb.box(x0, x1, H, H + 0.11, z1 - lip, z1, 1);
+        curb.box(x0, x0 + lip, H, H + 0.11, z0 + lip, z1 - lip, 1);
+        curb.box(x1 - lip, x1, H, H + 0.11, z0 + lip, z1 - lip, 1);
+      }
+    const curbMesh = new THREE.Mesh(curb.geometry(), new THREE.MeshStandardMaterial({ color: 0xd8d6d0, roughness: 0.92 }));
+    curbMesh.name = 'Raised curb ribbons';
+    curbMesh.receiveShadow = true;
+    this.group.add(curbMesh);
+
+    const pads: THREE.Matrix4[] = [];
+    for (const cw of this.g.crosswalks) {
+      for (const side of [-1, 1]) {
+        const x = cw.axis === 'x' ? cw.cx + side * (cw.halfLen + 0.9) : cw.cx;
+        const z = cw.axis === 'z' ? cw.cz + side * (cw.halfLen + 0.9) : cw.cz;
+        const sx = cw.axis === 'x' ? 1.4 : 2.0;
+        const sz = cw.axis === 'z' ? 1.4 : 2.0;
+        pads.push(new THREE.Matrix4().makeScale(sx, 0.035, sz).setPosition(x, H + 0.125, z));
+      }
+    }
+    const pad = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0xe5b422, roughness: 0.92, bumpScale: 0.2 }),
+      pads.length,
+    );
+    pads.forEach((mx, i) => pad.setMatrixAt(i, mx));
+    pad.name = 'Tactile crosswalk pads';
+    pad.receiveShadow = true;
+    pad.computeBoundingSphere();
+    this.group.add(pad);
+  }
+
+  /** Benches, bins and bus shelters add restrained street-scale detail. */
+  private buildStreetAmenities(): void {
+    const benches: THREE.Matrix4[] = [];
+    const bins: THREE.Matrix4[] = [];
+    const shelters: THREE.Matrix4[] = [];
+    const X = (i: number) => this.g.node(i, 0)!.x;
+    const Z = (j: number) => this.g.node(0, j)!.z;
+    for (let i = 0; i < this.g.nx - 1; i++)
+      for (let j = 0; j < this.g.ny - 1; j++) {
+        if ((i * 3 + j * 5) % 7 !== 0) continue;
+        const x0 = X(i) + this.hwV[i] + SIDEWALK + 5;
+        const x1 = X(i + 1) - this.hwV[i + 1] - SIDEWALK - 5;
+        const z0 = Z(j) + this.hwH[j] + SIDEWALK + 4;
+        const z1 = Z(j + 1) - this.hwH[j + 1] - SIDEWALK - 4;
+        const positions: [number, number, number][] = [[x0, z0, 0], [x1, z1, Math.PI], [x0, z1, Math.PI / 2], [x1, z0, -Math.PI / 2]];
+        for (const [x, z, yaw] of positions) {
+          // Vegetation and lamp footprints already exist at this stage.
+          if (this.circles.some((c) => Math.hypot(c.x - x, c.z - z) < c.r + 1.1)) continue;
+          benches.push(new THREE.Matrix4().makeRotationY(yaw).setPosition(x, 0.15, z));
+          bins.push(new THREE.Matrix4().makeTranslation(x + Math.cos(yaw) * 1.5, 0.15, z - Math.sin(yaw) * 1.5));
+          this.circles.push({ x, z, r: 0.45 });
+        }
+      }
+    // Six shelters on the two central arterials.
+    const mi = Math.floor(this.g.nx / 2), mj = Math.floor(this.g.ny / 2);
+    for (let k = 1; k < this.g.nx - 1; k += 2) {
+      const n = this.g.node(k, mj)!;
+      shelters.push(new THREE.Matrix4().makeTranslation(n.x + this.g.block * 0.34, 0.15, n.z + this.hwH[mj] + 2.4));
+    }
+    for (let k = 1; k < this.g.ny - 1; k += 2) {
+      const n = this.g.node(mi, k)!;
+      shelters.push(new THREE.Matrix4().makeRotationY(Math.PI / 2).setPosition(n.x + this.hwV[mi] + 2.4, 0.15, n.z + this.g.block * 0.34));
+    }
+
+    const benchParts = [
+      new THREE.BoxGeometry(1.8, 0.12, 0.52).translate(0, 0.62, 0),
+      new THREE.BoxGeometry(1.8, 0.62, 0.1).translate(0, 0.98, 0.25),
+      new THREE.BoxGeometry(0.1, 0.58, 0.1).translate(-0.65, 0.3, 0),
+      new THREE.BoxGeometry(0.1, 0.58, 0.1).translate(0.65, 0.3, 0),
+    ];
+    const benchGeo = mergeGeometries(benchParts, false)!;
+    const bench = new THREE.InstancedMesh(benchGeo, new THREE.MeshStandardMaterial({ color: 0x855b35, roughness: 0.82 }), Math.max(1, benches.length));
+    benches.forEach((mx, i) => bench.setMatrixAt(i, mx));
+    bench.count = benches.length;
+    bench.name = 'Park benches';
+    bench.castShadow = this.quality !== 'low';
+    bench.computeBoundingSphere();
+    this.group.add(bench);
+    const bin = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.25, 0.22, 0.85, 10).translate(0, 0.425, 0), new THREE.MeshStandardMaterial({ color: 0x1f6c55, roughness: 0.7, metalness: 0.25 }), Math.max(1, bins.length));
+    bins.forEach((mx, i) => bin.setMatrixAt(i, mx));
+    bin.count = bins.length;
+    bin.name = 'Street bins';
+    bin.computeBoundingSphere();
+    this.group.add(bin);
+
+    const shelterParts = [
+      new THREE.BoxGeometry(3.8, 0.1, 1.4).translate(0, 2.35, 0),
+      new THREE.BoxGeometry(0.09, 2.3, 0.09).translate(-1.75, 1.15, -0.55),
+      new THREE.BoxGeometry(0.09, 2.3, 0.09).translate(1.75, 1.15, -0.55),
+      new THREE.BoxGeometry(3.3, 0.1, 0.45).translate(0, 0.58, 0.38),
+    ];
+    const shelterGeo = mergeGeometries(shelterParts, false)!;
+    const shelter = new THREE.InstancedMesh(shelterGeo, new THREE.MeshStandardMaterial({ color: 0x52657a, roughness: 0.35, metalness: 0.55 }), Math.max(1, shelters.length));
+    shelters.forEach((mx, i) => shelter.setMatrixAt(i, mx));
+    shelter.count = shelters.length;
+    shelter.name = 'Bus shelters';
+    shelter.castShadow = this.quality !== 'low';
+    shelter.computeBoundingSphere();
+    this.group.add(shelter);
   }
 
   private buildParking(x0: number, x1: number, z0: number, z1: number, H: number, lines: GeoBuf, bld: { x: number; z: number; w: number; d: number; h: number; c: number }[]): void {
@@ -574,27 +822,93 @@ export class WorldBuilder {
     this.g.signs.push({ code: '6.4', x: x0 + 1, z: z0 - 0.3, faceDir: 3, stack: 0 });
   }
 
+  /** Three instanced species with branches and clustered crowns. */
   private buildTrees(trees: { x: number; z: number; s: number }[]): void {
-    const trunkG = new THREE.CylinderGeometry(0.16, 0.24, 3.2, 6).translate(0, 1.6, 0);
-    const crownG = new THREE.IcosahedronGeometry(2.3, 1).translate(0, 4.6, 0);
-    const trunk = new THREE.InstancedMesh(trunkG, new THREE.MeshStandardMaterial({ color: 0x5b4636, roughness: 1 }), trees.length);
-    const crown = new THREE.InstancedMesh(crownG, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, flatShading: true }), trees.length);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const c = new THREE.Color();
-    trees.forEach((t, k) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.rng() * 6.28);
-      m.compose(new THREE.Vector3(t.x, 0.15, t.z), q, new THREE.Vector3(t.s, t.s * (0.9 + this.rng() * 0.3), t.s));
-      trunk.setMatrixAt(k, m);
-      crown.setMatrixAt(k, m);
-      crown.setColorAt(k, c.setHSL(0.24 + this.rng() * 0.08, 0.45 + this.rng() * 0.2, 0.24 + this.rng() * 0.1));
-      this.circles.push({ x: t.x, z: t.z, r: 0.35 * t.s });
+    type TreeInstance = { x: number; z: number; s: number; sy: number; rot: number; color: THREE.Color };
+    const groups: TreeInstance[][] = [[], [], []];
+    trees.forEach((t, i) => {
+      const species = (i + Math.floor(this.rng() * 3)) % 3;
+      groups[species].push({
+        x: t.x,
+        z: t.z,
+        s: t.s,
+        sy: t.s * (0.9 + this.rng() * 0.22),
+        rot: this.rng() * Math.PI * 2,
+        color: new THREE.Color().setHSL(0.245 + species * 0.018 + this.rng() * 0.045, 0.46 + this.rng() * 0.18, 0.27 + this.rng() * 0.1),
+      });
+      this.circles.push({ x: t.x, z: t.z, r: 0.3 * t.s });
     });
-    for (const mm of [trunk, crown]) {
-      mm.castShadow = this.quality !== 'low';
-      mm.receiveShadow = true;
-      mm.computeBoundingSphere();
-      this.group.add(mm);
+
+    const speciesGeometry: { trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry }[] = [];
+    // Broad deciduous tree: visible branch fork + four irregular foliage lobes.
+    speciesGeometry.push({
+      trunk: mergeCompatible([
+        new THREE.CylinderGeometry(0.16, 0.25, 3.5, 8).translate(0, 1.75, 0),
+        new THREE.CylinderGeometry(0.07, 0.12, 1.8, 6).rotateZ(-0.68).translate(0.48, 3.35, 0),
+        new THREE.CylinderGeometry(0.06, 0.1, 1.55, 6).rotateZ(0.72).translate(-0.42, 3.25, 0.14),
+      ]),
+      crown: mergeCompatible([
+        new THREE.IcosahedronGeometry(1.55, 1).scale(1, 0.92, 1).translate(0, 4.65, 0),
+        new THREE.IcosahedronGeometry(1.22, 1).scale(1.05, 0.85, 0.95).translate(1.05, 4.35, 0.2),
+        new THREE.IcosahedronGeometry(1.25, 1).scale(0.95, 0.9, 1.05).translate(-1.0, 4.4, -0.15),
+        new THREE.IcosahedronGeometry(1.12, 1).scale(1, 0.85, 1).translate(0.15, 5.65, -0.1),
+      ]),
+    });
+    // Tashkent-style columnar poplar.
+    speciesGeometry.push({
+      trunk: mergeCompatible([new THREE.CylinderGeometry(0.13, 0.21, 4.4, 8).translate(0, 2.2, 0)]),
+      crown: mergeCompatible([
+        new THREE.IcosahedronGeometry(1.08, 1).scale(0.72, 1.75, 0.72).translate(0, 5.0, 0),
+        new THREE.IcosahedronGeometry(0.92, 1).scale(0.7, 1.65, 0.7).translate(0.12, 6.35, -0.08),
+        new THREE.IcosahedronGeometry(0.68, 1).scale(0.65, 1.35, 0.65).translate(-0.08, 7.45, 0.06),
+      ]),
+    });
+    // Ornamental shade tree: lower, layered canopy.
+    speciesGeometry.push({
+      trunk: mergeCompatible([
+        new THREE.CylinderGeometry(0.17, 0.24, 3.0, 8).translate(0, 1.5, 0),
+        new THREE.CylinderGeometry(0.055, 0.1, 1.35, 6).rotateX(0.7).translate(0, 2.9, 0.42),
+      ]),
+      crown: mergeCompatible([
+        new THREE.IcosahedronGeometry(1.48, 1).scale(1.35, 0.62, 1.12).translate(0, 4.05, 0),
+        new THREE.IcosahedronGeometry(1.08, 1).scale(1.15, 0.7, 1).translate(1.1, 4.12, 0.12),
+        new THREE.IcosahedronGeometry(1.08, 1).scale(1.15, 0.68, 1).translate(-1.08, 4.1, -0.14),
+        new THREE.IcosahedronGeometry(1.0, 1).scale(1.05, 0.72, 1).translate(0.15, 4.7, 0),
+      ]),
+    });
+
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x66503b, roughness: 0.96 });
+    for (let species = 0; species < groups.length; species++) {
+      const list = groups[species];
+      const geo = speciesGeometry[species];
+      if (!list.length) {
+        geo.trunk.dispose();
+        geo.crown.dispose();
+        continue;
+      }
+      const trunk = new THREE.InstancedMesh(geo.trunk, trunkMat.clone(), list.length);
+      const crownMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: species !== 1, vertexColors: false });
+      const crown = new THREE.InstancedMesh(geo.crown, crownMat, list.length);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      const pos = new THREE.Vector3();
+      const up = new THREE.Vector3(0, 1, 0);
+      list.forEach((t, k) => {
+        q.setFromAxisAngle(up, t.rot);
+        pos.set(t.x, 0.15, t.z);
+        scale.set(t.s, t.sy, t.s);
+        m.compose(pos, q, scale);
+        trunk.setMatrixAt(k, m);
+        crown.setMatrixAt(k, m);
+        crown.setColorAt(k, t.color);
+      });
+      for (const mesh of [trunk, crown]) {
+        mesh.castShadow = this.quality !== 'low';
+        mesh.receiveShadow = true;
+        mesh.computeBoundingSphere();
+        this.group.add(mesh);
+      }
     }
   }
 
@@ -655,7 +969,7 @@ export class WorldBuilder {
     pool.computeBoundingSphere();
     pool.renderOrder = 2;
     this.group.add(pool);
-    this.engine.onEnvChange.push(() => {
+    this.engine.subscribeEnvironment(() => {
       const n = this.engine.night;
       lampMat.emissiveIntensity = n > 0.3 ? 3 : 0;
       poolMat.opacity = n > 0.3 ? 0.55 * n : 0;
@@ -713,7 +1027,7 @@ export class WorldBuilder {
       const [w, h] = signSize(code);
       const tex = signTexture(code, this.quality === 'high' ? 8 : 4);
       const mat = new THREE.MeshStandardMaterial({ map: tex, transparent: false, alphaTest: 0.4, roughness: 0.45, metalness: 0.0, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.12 });
-      this.engine.onEnvChange.push(() => (mat.emissiveIntensity = this.engine.night > 0.3 ? 0.35 : 0.1));
+      this.engine.subscribeEnvironment(() => (mat.emissiveIntensity = this.engine.night > 0.3 ? 0.35 : 0.1));
       const face = new THREE.InstancedMesh(new THREE.PlaneGeometry(w, h), mat, list.length);
       const back = new THREE.InstancedMesh(new THREE.PlaneGeometry(w * 0.92, h * 0.92).rotateY(Math.PI).translate(0, 0, -0.01), backMat, list.length);
       list.forEach((p, k) => {
@@ -903,6 +1217,27 @@ export class WorldBuilder {
       }
     }
   }
+}
+
+/** Normalises procedural parts before merging (index/UV sets differ by shape). */
+function mergeCompatible(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const normalised: THREE.BufferGeometry[] = [];
+  for (const source of parts) {
+    let geo = source;
+    if (geo.index) {
+      const flat = geo.toNonIndexed();
+      geo.dispose();
+      geo = flat;
+    }
+    for (const name of Object.keys(geo.attributes)) if (name !== 'position' && name !== 'normal') geo.deleteAttribute(name);
+    if (!geo.getAttribute('normal')) geo.computeVertexNormals();
+    normalised.push(geo);
+  }
+  if (normalised.length === 1) return normalised[0];
+  const merged = mergeGeometries(normalised, false);
+  for (const geo of normalised) geo.dispose();
+  if (!merged) throw new Error('Unable to merge compatible procedural geometry');
+  return merged;
 }
 
 function radialTexture(): THREE.Texture {

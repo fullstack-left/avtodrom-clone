@@ -27,7 +27,7 @@ export class EngineContext {
   private rainPos: Float32Array | null = null;
   private listeners: (() => void)[] = [];
   private disposables = new Set<{ dispose(): void }>();
-  onEnvChange: (() => void)[] = [];
+  private environmentListeners = new Set<() => void>();
 
   constructor(public canvas: HTMLCanvasElement, quality: Quality) {
     this.quality = quality;
@@ -118,8 +118,9 @@ export class EngineContext {
       this.sun.color.set(0xfff4e0);
       this.sun.intensity = 2.6;
       this.sun.position.set(-120, 200, 80);
-      this.hemi.intensity = 0.8;
+      this.hemi.intensity = 0.95;
       this.hemi.color.set(0xdbeafe);
+      this.hemi.groundColor.set(0x66705b);
       fog.color.set(0xcfd8e3);
       this.renderer.toneMappingExposure = 1.0;
     } else if (t === 'evening') {
@@ -130,19 +131,21 @@ export class EngineContext {
       this.sun.color.set(0xffa860);
       this.sun.intensity = 1.5;
       this.sun.position.set(-220, 60, 40);
-      this.hemi.intensity = 0.45;
+      this.hemi.intensity = 0.58;
       this.hemi.color.set(0xffc9a0);
+      this.hemi.groundColor.set(0x5a4138);
       fog.color.set(0x9e8778);
       this.renderer.toneMappingExposure = 0.95;
     } else {
       s.background = new THREE.Color(0x070b16);
       s.environment = this.envTex;
-      s.environmentIntensity = 0.06;
+      s.environmentIntensity = 0.12;
       this.sun.color.set(0x9fb4ff);
-      this.sun.intensity = 0.18;
+      this.sun.intensity = 0.3;
       this.sun.position.set(80, 200, -60);
-      this.hemi.intensity = 0.16;
+      this.hemi.intensity = 0.28;
       this.hemi.color.set(0x5d6b9c);
+      this.hemi.groundColor.set(0x111522);
       fog.color.set(0x0b1020);
       this.renderer.toneMappingExposure = 1.1;
     }
@@ -166,7 +169,19 @@ export class EngineContext {
       fog.far = 1100 * base;
     }
     this.setRain(w === 'rain');
-    for (const f of this.onEnvChange) f();
+    for (const f of this.environmentListeners) f();
+  }
+
+  /**
+   * Registers an environment-dependent material and initializes it immediately.
+   * World assets are constructed after setTime/setWeather during startup, so a
+   * push-only callback list left night windows, wet roads and street lamps in
+   * their constructor state until the user changed settings.
+   */
+  subscribeEnvironment(f: () => void): () => void {
+    this.environmentListeners.add(f);
+    f();
+    return () => this.environmentListeners.delete(f);
   }
 
   private setRain(on: boolean): void {
@@ -242,6 +257,7 @@ export class EngineContext {
     for (const c of [...this.scene.children]) this.disposeObject(c);
     for (const d of this.disposables) d.dispose();
     this.disposables.clear();
+    this.environmentListeners.clear();
     for (const l of this.listeners) l();
     this.renderer.dispose();
   }
