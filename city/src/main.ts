@@ -8,7 +8,7 @@ import { Menu, loadSettings } from './ui/Menu';
 import { GpuTrafficBenchmark } from './gpu/GpuTrafficBenchmark';
 import { setLang, t } from './i18n';
 
-const VERSION = '1.0.0';
+const VERSION = '2.0.0';
 
 const app = document.getElementById('app')!;
 const canvas = document.getElementById('gl') as HTMLCanvasElement;

@@ -161,13 +161,14 @@ export class TrafficSim {
   /**
    * Converts the density control to a road-network occupancy target. About
    * 30 m of lane per vehicle leaves room for IDM headways and junction queues.
-   * Graphics quality deliberately does not participate in this calculation.
+   * Player modes are capped at 560 vehicles (180..560 density range), while
+   * spectator mode may use 700. Graphics quality affects rendering only.
    */
   calibratedCount(density: number, spectator = false): number {
     const physical = Math.max(1, Math.min(this.cap, Math.floor((this.laneKilometres * 1000) / 30)));
-    const playableMax = Math.min(650, physical);
+    const playableMax = Math.min(560, physical);
     if (spectator) return Math.min(700, physical);
-    const playableMin = Math.min(220, playableMax);
+    const playableMin = Math.min(180, playableMax);
     const d = Math.max(0, Math.min(1, density));
     return Math.round(playableMin + d * (playableMax - playableMin));
   }

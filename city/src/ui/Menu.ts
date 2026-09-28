@@ -26,7 +26,7 @@ const DEFAULTS: Settings = {
   car: 'nexia2',
   lang: getLang(),
   quality: 'high',
-  density: 0.5,
+  density: 0.45,
   pedestrians: true,
   time: 'day',
   weather: 'clear',

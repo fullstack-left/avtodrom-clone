@@ -1,7 +1,7 @@
 {
   "name": "avtoshahar",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Avtoshahar — O'zbekiston YHQ asosidagi 3D shahar haydash simulyatori (Web / Android / Windows)",
   "author": "Avtodrom",
   "license": "MIT",

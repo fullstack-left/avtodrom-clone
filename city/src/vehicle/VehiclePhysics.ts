@@ -380,7 +380,8 @@ export class VehiclePhysics {
       // snapped RPM in the wrong direction and caused false stalls).
       const lockTorque = Te + (s.engineInertia * slip) / dt;
       let Tc: number;
-      if (engage > 0.985 && Math.abs(lockTorque) <= Tmax) {
+      const lockThreshold = this.manualAssist ? 0.82 : 0.985;
+      if (engage > lockThreshold && Math.abs(lockTorque) <= Tmax) {
         Tc = lockTorque;
         this.engineOmega = inOmega;
       } else {
@@ -434,7 +435,8 @@ export class VehiclePhysics {
     brakeF = Math.min(brakeF, mu * Fzf * 0.95);
     const rearLocked = c.handbrake && brakeR > mu * Fzr;
     brakeR = Math.min(brakeR, mu * Fzr * (c.handbrake ? 1 : 0.95));
-    FxF = Math.max(-mu * Fzf, Math.min(mu * Fzf, FxF));
+    const tractiveLimit = Math.min(mu * Fzf, m * (s.transmission === 'automatic' ? 3.05 : 3.2));
+    FxF = Math.max(-tractiveLimit, Math.min(tractiveLimit, FxF));
     const stopHold = Math.abs(this.vx) < 0.25 && (brakeT + hbT > 50);
     let FxBrakeF = 0, FxBrakeR = 0;
     if (!stopHold) {

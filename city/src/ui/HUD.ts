@@ -164,11 +164,11 @@ export class HUD {
     const actions = document.createElement('div');
     actions.className = 'touch-acts';
     actions.append(
-      action('◀', 'toggleIndicatorLeft'),
-      action('▶', 'toggleIndicatorRight'),
-      action('△', 'toggleHazard'),
-      action('💡', 'toggleHeadlights', t('headlights')),
-      action('🎥', 'cycleCamera', t('camera')),
+      action('Q', 'toggleIndicatorLeft'),
+      action('E', 'toggleIndicatorRight'),
+      action('H', 'toggleHazard'),
+      action('L', 'toggleHeadlights', t('headlights')),
+      action('C', 'cycleCamera', t('camera')),
       action('B', 'toggleSeatbelt', t('seatbelt')),
     );
     this.root.appendChild(actions);
